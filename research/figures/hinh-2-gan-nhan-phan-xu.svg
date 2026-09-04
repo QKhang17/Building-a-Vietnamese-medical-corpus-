@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <style>
+      .title{font:700 34px Arial,sans-serif;fill:#102a43}.sub{font:400 19px Arial,sans-serif;fill:#486581}
+      .h{font:700 21px Arial,sans-serif;fill:#102a43}.t{font:400 17px Arial,sans-serif;fill:#243b53}.s{font:400 15px Arial,sans-serif;fill:#486581}
+      .box{stroke:#486581;stroke-width:2;rx:18}.arrow{stroke:#334e68;stroke-width:3;fill:none;marker-end:url(#a)}
+      .dash{stroke:#829ab1;stroke-width:2.5;stroke-dasharray:10 8;fill:none;marker-end:url(#a)}
+    </style>
+    <marker id="a" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M0,0 L12,6 L0,12 z" fill="#334e68"/></marker>
+    <filter id="s" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="5" stdDeviation="5" flood-opacity=".12"/></filter>
+  </defs>
+  <rect width="1600" height="900" fill="#f7fafc"/>
+  <text x="120" y="62" class="title">Hình 2. Gán độc lập, nghiên cứu hỗ trợ và phân xử</text>
+  <text x="70" y="96" class="sub">Test bị khóa và blind; development dùng thiết kế đối trọng để đo hiệu quả preannotation.</text>
+
+  <g filter="url(#s)"><rect x="70" y="190" width="250" height="210" class="box" fill="#e6fffa"/></g>
+  <text x="195" y="232" text-anchor="middle" class="h">Mẫu 300 tóm tắt</text>
+  <text x="105" y="278" class="t">Pilot: 30</text><text x="105" y="315" class="t">Development: 70</text><text x="105" y="352" class="t">Test khóa: 200</text>
+  <text x="105" y="382" class="s">ID + checksum + seed</text>
+
+  <g filter="url(#s)"><rect x="455" y="140" width="290" height="180" class="box" fill="#ebf8ff"/></g>
+  <text x="600" y="183" text-anchor="middle" class="h">Annotator A</text>
+  <text x="600" y="220" text-anchor="middle" class="t">Bản gán nhãn riêng</text>
+  <text x="600" y="252" text-anchor="middle" class="t">Không thấy bản B</text>
+  <text x="600" y="284" text-anchor="middle" class="s">span/type/code + audit + time</text>
+
+  <g filter="url(#s)"><rect x="455" y="410" width="290" height="180" class="box" fill="#fff5f5"/></g>
+  <text x="600" y="453" text-anchor="middle" class="h">Annotator B</text>
+  <text x="600" y="490" text-anchor="middle" class="t">Bản gán nhãn riêng</text>
+  <text x="600" y="522" text-anchor="middle" class="t">Không thấy bản A</text>
+  <text x="600" y="554" text-anchor="middle" class="s">span/type/code + audit + time</text>
+
+  <g filter="url(#s)"><rect x="860" y="230" width="310" height="250" class="box" fill="#fffbea"/></g>
+  <text x="1015" y="273" text-anchor="middle" class="h">So sánh sau khi nộp</text>
+  <text x="905" y="315" class="t">• exact agreement theo loại</text>
+  <text x="905" y="350" class="t">• lệch ranh giới</text>
+  <text x="905" y="385" class="t">• sai loại hoặc mã</text>
+  <text x="905" y="420" class="t">• nhãn chỉ có ở một bản</text>
+  <text x="1015" y="453" text-anchor="middle" class="s">Giống hệt → khóa tự động</text>
+
+  <g filter="url(#s)"><rect x="1275" y="185" width="260" height="190" class="box" fill="#f3e8ff"/></g>
+  <text x="1405" y="228" text-anchor="middle" class="h">Adjudicator</text>
+  <text x="1405" y="265" text-anchor="middle" class="t">Xem hai bản song song</text>
+  <text x="1405" y="298" text-anchor="middle" class="t">Sửa/thêm/xóa và nêu lý do</text>
+  <text x="1405" y="332" text-anchor="middle" class="s">Chỉ mở khi có conflict</text>
+
+  <g filter="url(#s)"><rect x="1275" y="485" width="260" height="170" class="box" fill="#e9fbe9"/></g>
+  <text x="1405" y="528" text-anchor="middle" class="h">Snapshot vàng</text>
+  <text x="1405" y="565" text-anchor="middle" class="t">Một bản duy nhất, bất biến</text>
+  <text x="1405" y="598" text-anchor="middle" class="t">entities + SHA-256</text>
+  <text x="1405" y="629" text-anchor="middle" class="s">locked · có provenance</text>
+
+  <g filter="url(#s)"><rect x="360" y="700" width="875" height="125" class="box" fill="#edf2f7"/></g>
+  <text x="798" y="740" text-anchor="middle" class="h">Nghiên cứu đối trọng trên development (70)</text>
+  <text x="798" y="777" text-anchor="middle" class="t">35 mẫu: A assisted/B blind · 35 mẫu: A blind/B assisted</text>
+  <text x="798" y="807" text-anchor="middle" class="s">So sánh thời gian, giữ/sửa/xóa/thêm và chất lượng với snapshot vàng</text>
+
+  <path d="M320 255 C380 255 390 230 455 230" class="arrow"/><path d="M320 335 C380 335 390 500 455 500" class="arrow"/>
+  <path d="M745 230 C800 230 810 300 860 315" class="arrow"/><path d="M745 500 C800 500 810 420 860 400" class="arrow"/>
+  <path d="M1170 330 H1275" class="arrow"/><path d="M1405 375 V485" class="arrow"/>
+  <path d="M1170 440 C1240 440 1230 570 1275 570" class="dash"/>
+  <path d="M600 590 V700" class="dash"/><path d="M1015 480 C1015 600 940 630 900 700" class="dash"/>
+</svg>

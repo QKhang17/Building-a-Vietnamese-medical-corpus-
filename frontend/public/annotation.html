@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MedNLP Studio - Không gian nhãn vàng</title>
+  <link rel="stylesheet" href="/annotation.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>Không gian nhãn vàng</h1>
+      <p>Gán độc lập, hỗ trợ tiền nhãn và phân xử có truy vết</p>
+    </div>
+    <div class="top-actions">
+      <span id="sessionLabel" class="session-label">Chưa xác thực</span>
+      <a href="/">Về MedNLP Studio</a>
+    </div>
+  </header>
+
+  <div id="authWarning" class="warning" hidden>
+    Bạn chưa đăng nhập chuyên gia. Hãy đăng nhập ở MedNLP Studio rồi mở lại trang này.
+  </div>
+
+  <main class="workspace">
+    <aside class="queue-panel">
+      <div class="queue-tools">
+        <label>Vai trò
+          <select id="roleFilter">
+            <option value="">Tất cả</option>
+            <option value="annotator">Người gán nhãn</option>
+            <option value="adjudicator">Người phân xử</option>
+          </select>
+        </label>
+        <label>Trạng thái
+          <select id="statusFilter">
+            <option value="">Tất cả</option>
+            <option value="assigned">Được giao</option>
+            <option value="in_progress">Đang làm</option>
+            <option value="submitted">Đã nộp</option>
+            <option value="conflict">Cần phân xử</option>
+            <option value="locked">Đã khóa</option>
+          </select>
+        </label>
+        <button id="refreshQueue" type="button">Tải danh sách</button>
+      </div>
+      <div id="assignmentList" class="assignment-list">
+        <div class="placeholder">Đang chờ dữ liệu...</div>
+      </div>
+    </aside>
+
+    <section class="editor-panel">
+      <div id="emptyState" class="empty-state">
+        <h2>Chọn một assignment</h2>
+        <p>Văn bản, entity và lịch sử phiên sẽ xuất hiện ở đây.</p>
+      </div>
+
+      <div id="editor" hidden>
+        <div class="document-head">
+          <div>
+            <div class="eyebrow" id="projectLabel">—</div>
+            <h2 id="documentTitle">—</h2>
+            <div id="documentMeta" class="document-meta">—</div>
+          </div>
+          <div id="statusBadge" class="status-badge">—</div>
+        </div>
+
+        <div id="blindNotice" class="notice"></div>
+
+        <section id="adjudicationPanel" class="adjudication-panel" hidden>
+          <h3>Hai bản nộp độc lập</h3>
+          <div id="submissionCards" class="submission-grid"></div>
+        </section>
+
+        <section class="source-section">
+          <div class="section-head">
+            <div>
+              <h3>Văn bản gốc</h3>
+              <p>Chọn một đoạn trong ô rồi bấm “Thêm vùng chọn”. Offset dùng chuẩn [start, end).</p>
+            </div>
+            <div class="selection-tools">
+              <select id="newEntityType" aria-label="Loại entity mới">
+                <option>Bệnh lý</option><option>Triệu chứng</option><option>Điều trị</option>
+                <option>Xét nghiệm</option><option>Hình ảnh</option><option>Sinh lý</option>
+              </select>
+              <button id="addSelection" type="button">Thêm vùng chọn</button>
+            </div>
+          </div>
+          <textarea id="sourceText" readonly spellcheck="false"></textarea>
+          <div id="highlightPreview" class="highlight-preview"></div>
+        </section>
+
+        <section class="entity-section">
+          <div class="section-head">
+            <div>
+              <h3>Danh sách entity</h3>
+              <p id="entityCount">0 entity</p>
+            </div>
+            <div class="editor-actions">
+              <button id="undoButton" class="secondary" type="button">Hoàn tác lần lưu cuối</button>
+              <button id="saveButton" type="button">Lưu phiên bản</button>
+              <button id="submitButton" class="primary" type="button">Nộp bản gán nhãn</button>
+              <button id="lockButton" class="danger" type="button" hidden>Khóa bản vàng</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Span</th><th>Bề mặt</th><th>Loại</th><th>Mã</th><th>Nguồn</th><th>Quyết định</th><th>Lý do</th><th></th></tr></thead>
+              <tbody id="entityRows"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" hidden></div>
+  <script type="module" src="/annotation.js"></script>
+</body>
+</html>

@@ -1,0 +1,76 @@
+# 1. Chặn tất cả các file có đuôi này
+*.txt
+*.png
+*.sql
+*.docx
+*.doc
+
+# 2. NGOẠI TRỪ file mysql.txt (Lệnh này phải nằm DƯỚI dòng *.txt)
+# mysql.txt contains local account seeds; keep private.
+
+# 3. Bỏ qua file môi trường (chứa cấu hình/mật khẩu nhạy cảm)
+.env
+
+# ---------------------------------------------------
+# 4. CÁC THƯ MỤC RÁC/MÔI TRƯỜNG (Bắt buộc phải chặn)
+.venv/
+.idea/
+.vscode/
+.pytest_cache/
+__pycache__/
+tmp/
+output/
+
+# 5. Các thư mục dữ liệu quá nặng (Bỏ comment nếu muốn chặn)
+data/
+Kho Ngữ Liệu Y Học Tiếng Việt/
+Kho_Ngu_Lieu_Txt/
+Từ Điển Y Học/
+# Chặn các file weights/model AI và dataset
+*.bin
+*.pt
+*.pth
+*.onnx
+*.safetensors
+*.gguf
+*.tar.gz
+*.zip
+*.rar
+*.csv
+*.parquet
+*.h5
+*.pkl
+
+# Chặn thư mục node_modules nếu có frontend
+frontend/node_modules/
+node_modules/
+
+# Private configuration, credentials and local state
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.log
+*.bak
+
+# Medical source material / corpus: publish only after separate review
+*.pdf
+*.xlsx
+*.xls
+*.jsonl
+Văn_Bản_Y_Tế_PDF/
+Văn_Bản_Y_Tế_TXT/
+Kho_Ngu_Lieu_Txt/
+Kho Ngữ Liệu Y Học Tiếng Việt/
+Từ Điển Y Học/
+Tu Dien Y Hoc/
+Tamanh/
+data/
+frontend/dist/

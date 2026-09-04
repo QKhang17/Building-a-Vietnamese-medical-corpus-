@@ -1,0 +1,13 @@
+{
+  "provider": "Google Gemini Developer API",
+  "model": "gemini-2.5-flash",
+  "service_tier": "standard_paid",
+  "modality": "text",
+  "currency": "USD",
+  "unit": "per_1_million_tokens",
+  "input_price": 0.30,
+  "output_price_including_thinking_tokens": 2.50,
+  "as_of": "2026-08-30",
+  "source": "https://ai.google.dev/gemini-api/docs/pricing",
+  "note": "Khóa cho lần chạy nghiên cứu; phải tạo pricing lock mới nếu ngày/model/tier thay đổi."
+}
