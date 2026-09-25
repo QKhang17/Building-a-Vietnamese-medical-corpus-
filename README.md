@@ -2,7 +2,7 @@
 
 Hệ thống thu thập, chuẩn hóa, trích xuất và gán nhãn kho ngữ liệu y tế tiếng Việt. Ứng dụng hỗ trợ thu thập bài báo khoa học và hỏi đáp y khoa, tách cấu trúc bài báo từ PDF, gán nhãn thực thể bằng từ điển hoặc Gemini, đồng thời cung cấp quy trình để chuyên gia thẩm định kết quả.
 
-Repository: <https://github.com/LCV-npc/NCKH_CORPUS>
+Repository: <https://github.com/QKhang17/Building-a-Vietnamese-medical-corpus->
 
 ## Chức năng chính
 
@@ -106,8 +106,8 @@ NCKH/
 ### 1. Clone repository
 
 ```powershell
-git clone https://github.com/LCV-npc/NCKH_CORPUS.git
-cd NCKH_CORPUS
+git clone https://github.com/QKhang17/Building-a-Vietnamese-medical-corpus-.git
+cd Building-a-Vietnamese-medical-corpus-
 ```
 
 ### 2. Khởi tạo MySQL
