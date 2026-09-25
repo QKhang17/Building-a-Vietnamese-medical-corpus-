@@ -16,10 +16,26 @@ from supervised_ner_utils import (  # noqa: E402
     entity_counts_from_bio,
     record_to_words,
 )
-from supervised_ner_hf import encode_records  # noqa: E402
+from supervised_ner_hf import encode_records, training_arguments  # noqa: E402
 
 
 class SupervisedNerPipelineTests(unittest.TestCase):
+    def test_transformers_v5_training_argument_aliases(self):
+        class TrainingArgumentsV5:
+            def __init__(self, output_dir, eval_strategy="no", warmup_steps=0):
+                self.output_dir = output_dir
+                self.eval_strategy = eval_strategy
+                self.warmup_steps = warmup_steps
+
+        args = training_arguments(
+            {"TrainingArguments": TrainingArgumentsV5},
+            output_dir="checkpoints",
+            evaluation_strategy="epoch",
+            warmup_ratio=0.1,
+        )
+        self.assertEqual("epoch", args.eval_strategy)
+        self.assertEqual(0.1, args.warmup_steps)
+
     def test_transformers_v5_slow_tokenizer_fallback(self):
         class SlowTokenizer:
             unk_token = "<unk>"

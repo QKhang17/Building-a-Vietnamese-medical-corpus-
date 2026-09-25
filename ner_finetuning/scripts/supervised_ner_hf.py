@@ -258,8 +258,15 @@ def compute_metrics(eval_prediction) -> dict:
 
 def training_arguments(deps: dict, **kwargs):
     signature = inspect.signature(deps["TrainingArguments"].__init__)
-    if "eval_strategy" in signature.parameters:
+    parameters = signature.parameters
+    if "eval_strategy" in parameters and "evaluation_strategy" in kwargs:
         kwargs["eval_strategy"] = kwargs.pop("evaluation_strategy")
+    if "warmup_ratio" in kwargs and "warmup_ratio" not in parameters:
+        if "warmup_steps" in parameters:
+            # Transformers 5 accepts a float in [0, 1) as a ratio here.
+            kwargs["warmup_steps"] = kwargs.pop("warmup_ratio")
+        elif "warmup_step" in parameters:
+            kwargs["warmup_step"] = kwargs.pop("warmup_ratio")
     return deps["TrainingArguments"](**kwargs)
 
 
