@@ -117,6 +117,44 @@ def load_model(deps: dict, model_or_checkpoint: str, use_crf: bool, initialize_f
     return deps["AutoModelForTokenClassification"].from_pretrained(model_or_checkpoint, config=config)
 
 
+def _encode_single_sequence(tokenizer, token_ids: list[int]) -> tuple[dict, list[int]]:
+    """Add special tokens without relying on helpers removed in Transformers 5."""
+    if hasattr(tokenizer, "prepare_for_model"):
+        encoded = tokenizer.prepare_for_model(
+            token_ids,
+            add_special_tokens=True,
+            truncation=False,
+            return_attention_mask=True,
+            return_special_tokens_mask=True,
+        )
+        special_mask = encoded.pop("special_tokens_mask")
+        return dict(encoded), special_mask
+
+    start_id = getattr(tokenizer, "cls_token_id", None)
+    if start_id is None:
+        start_id = getattr(tokenizer, "bos_token_id", None)
+    end_id = getattr(tokenizer, "sep_token_id", None)
+    if end_id is None:
+        end_id = getattr(tokenizer, "eos_token_id", None)
+    special_count = tokenizer.num_special_tokens_to_add(pair=False)
+    if special_count == 0:
+        input_ids = list(token_ids)
+        special_mask = [0] * len(token_ids)
+    elif special_count == 2 and start_id is not None and end_id is not None:
+        # PhoBERT and XLM-R both encode one sequence as BOS + tokens + EOS.
+        input_ids = [start_id, *token_ids, end_id]
+        special_mask = [1, *([0] * len(token_ids)), 1]
+    else:
+        raise RuntimeError(
+            f"Unsupported tokenizer special-token layout: {tokenizer.__class__.__name__} "
+            f"reports {special_count} special tokens"
+        )
+    encoded = {"input_ids": input_ids, "attention_mask": [1] * len(input_ids)}
+    if "token_type_ids" in getattr(tokenizer, "model_input_names", []):
+        encoded["token_type_ids"] = [0] * len(input_ids)
+    return encoded, special_mask
+
+
 def encode_records(rows: list[dict], tokenizer, max_length: int) -> tuple[list[dict], list[dict]]:
     features: list[dict] = []
     metadata: list[dict] = []
@@ -149,23 +187,7 @@ def encode_records(rows: list[dict], tokenizer, max_length: int) -> tuple[list[d
                 flat_tokens.extend(pieces)
                 flat_word_ids.extend([local_word_id] * len(pieces))
             token_ids = tokenizer.convert_tokens_to_ids(flat_tokens)
-            if hasattr(tokenizer, "prepare_for_model"):
-                encoded = tokenizer.prepare_for_model(
-                    token_ids,
-                    add_special_tokens=True,
-                    truncation=False,
-                    return_attention_mask=True,
-                    return_special_tokens_mask=True,
-                )
-                special_mask = encoded.pop("special_tokens_mask")
-            else:
-                # Transformers 5 removed prepare_for_model from some slow tokenizers,
-                # including XLMRobertaTokenizer. Build the same fields explicitly.
-                input_ids = tokenizer.build_inputs_with_special_tokens(token_ids)
-                special_mask = tokenizer.get_special_tokens_mask(token_ids, already_has_special_tokens=False)
-                encoded = {"input_ids": input_ids, "attention_mask": [1] * len(input_ids)}
-                if "token_type_ids" in getattr(tokenizer, "model_input_names", []):
-                    encoded["token_type_ids"] = tokenizer.create_token_type_ids_from_sequences(token_ids)
+            encoded, special_mask = _encode_single_sequence(tokenizer, token_ids)
             word_ids: list[int | None] = []
             flat_index = 0
             for is_special in special_mask:

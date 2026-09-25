@@ -24,6 +24,10 @@ class SupervisedNerPipelineTests(unittest.TestCase):
         class SlowTokenizer:
             unk_token = "<unk>"
             model_input_names = ["input_ids", "attention_mask"]
+            bos_token_id = 0
+            eos_token_id = 2
+            cls_token_id = None
+            sep_token_id = None
 
             def tokenize(self, text):
                 return [text]
@@ -33,12 +37,6 @@ class SupervisedNerPipelineTests(unittest.TestCase):
 
             def num_special_tokens_to_add(self, pair=False):
                 return 2
-
-            def build_inputs_with_special_tokens(self, token_ids):
-                return [0, *token_ids, 2]
-
-            def get_special_tokens_mask(self, token_ids, already_has_special_tokens=False):
-                return [1, *([0] * len(token_ids)), 1]
 
         text = "viêm phổi"
         row = {
