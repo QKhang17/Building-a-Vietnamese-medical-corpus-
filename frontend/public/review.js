@@ -12,6 +12,8 @@ let reviewerDetailDocument = null;
 let reviewerDetailComparison = null;
 let reviewerDetailMode = "text";
 const reviewerDecisionState = {};
+let expertCurrentLabelSource = "icd10"; // 'icd10' | 'ai' — nguồn nhãn của bài đang review
+const expertAnnotationState = {};
 
 function reviewEscape(value) {
   return String(value ?? "")
@@ -33,7 +35,8 @@ function statusBadge(value) {
 }
 
 async function reviewRequest(path, options = {}) {
-  const response = await fetch(`/api${path}`, options);
+  const requestOptions = { cache: "no-store", ...options };
+  const response = await fetch(`/api${path}`, requestOptions);
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
   return payload;
@@ -71,6 +74,7 @@ function initializeReviewerWorkspace() {
     <div class="nav-section-label">Reviewer</div>
     <a class="nav-item" data-review-view="reviewer-dashboard" onclick="showReviewerView('dashboard')"><span class="nav-label">Dashboard</span></a>
     <a class="nav-item" data-review-view="reviewer-reviews" onclick="showReviewerView('reviews')"><span class="nav-label">Review Dashboard</span></a>
+    <a class="nav-item" data-screen="ai-evaluation" onclick="switchScreen('ai-evaluation')"><span class="nav-label">Đánh giá AI</span></a>
   `;
   window.addEventListener("popstate", () => {
     const documentId = reviewerReviewIdFromPath(location.pathname);
@@ -167,10 +171,12 @@ function initializeExpertWorkspace() {
   const nav = document.querySelector(".sidebar-nav");
   nav.innerHTML = `
     <div class="nav-section-label">Chuyên gia</div>
+    <button class="nav-collapse-toggle" type="button" onclick="toggleDocumentSidebar()" title="Thu gọn/mở rộng thanh tài liệu">⇔ Tài liệu</button>
     <a class="nav-item" data-review-view="dashboard" onclick="showExpertView('dashboard')"><span class="nav-label">Dashboard</span></a>
     <a class="nav-item" data-review-view="icd10" onclick="showExpertView('icd10')"><span class="nav-label">ICD-10 Labeled</span></a>
     <a class="nav-item" data-review-view="ai-labeled" onclick="showExpertView('ai-labeled')"><span class="nav-label">AI Labeled</span></a>
     <a class="nav-item" data-review-view="reviewed" onclick="showExpertView('reviewed')"><span class="nav-label">Reviewed</span></a>
+    <a class="nav-item" data-screen="ai-evaluation" onclick="switchScreen('ai-evaluation')"><span class="nav-label">Đánh giá AI</span></a>
     <a class="nav-item" onclick="logoutCurrentUser()"><span class="nav-label">Logout</span></a>
   `;
   window.addEventListener("popstate", () => {
@@ -184,6 +190,10 @@ function initializeExpertWorkspace() {
   const documentId = expertReviewIdFromPath(location.pathname);
   if (documentId) openExpertReview(documentId, false);
   else showExpertView(expertViewFromPath(location.pathname) || "dashboard", false);
+}
+
+function toggleDocumentSidebar() {
+  document.body.classList.toggle("documents-sidebar-collapsed");
 }
 
 function expertViewFromPath(path) {
@@ -272,6 +282,7 @@ async function loadExpertDocumentPage(view, page) {
   if (status) params.set("review_status", status);
   if (icd) params.set("icd", icd);
   try {
+    params.set("_refresh", String(Date.now()));
     const data = await reviewRequest(`${listEndpoint(view)}?${params}`);
     area.innerHTML = renderDocumentTable(data, view);
   } catch (error) {
@@ -289,7 +300,8 @@ function renderDocumentTable(data, view) {
     const middle = view === "icd10"
       ? `<td>${reviewEscape(item.icd10_codes || "—")}</td><td>${reviewEscape(item.icd10_labels || "—")}</td>`
       : `<td>${reviewEscape([item.primary_icd10_code, item.primary_icd10_label].filter(Boolean).join(" - ") || "AI entities saved (no ICD-10 code)")}</td><td>${item.confidence == null ? "Không có dữ liệu" : `${Math.round(Number(item.confidence) * 100)}%`}</td>`;
-    return `<tr><td>${item.id}</td><td class="document-cell">${reviewEscape(item.title || "Không có tiêu đề")}<div class="muted">${reviewEscape(item.authors || "")}</div></td>${middle}<td>${statusBadge(item.reviewStatus)}</td><td><button class="review-action" onclick="openExpertReview(${Number(item.id)})">Review</button></td></tr>`;
+    const src = view === "icd10" ? "icd10" : "ai";
+    return `<tr><td>${item.id}</td><td class="document-cell">${reviewEscape(item.title || "Không có tiêu đề")}<div class="muted">${reviewEscape(item.authors || "")}</div></td>${middle}<td>${statusBadge(item.reviewStatus)}</td><td><button class="review-action" onclick="openExpertReview(${Number(item.id)}, true, '${src}')">Review</button></td></tr>`;
   }).join("");
   return `<div class="review-table-wrap"><table class="review-table"><thead><tr><th>ID</th><th>Document</th>${heading}<th>Review Status</th><th>Action</th></tr></thead><tbody>${rows}</tbody></table></div>${renderPager(data, `loadExpertDocumentPage('${view}', __PAGE__)`)}`;
 }
@@ -319,7 +331,8 @@ async function loadReviewedPage(page) {
   } catch (error) { area.innerHTML = `<div class="review-error">Unable to load reviews: ${reviewEscape(error.message)}</div>`; }
 }
 
-async function openExpertReview(documentId, push = true) {
+async function openExpertReview(documentId, push = true, labelSource = "icd10") {
+  expertCurrentLabelSource = labelSource || "icd10";
   if (push && location.pathname !== `/expert/review/${documentId}`) {
     history.pushState({}, "", `/expert/review/${documentId}`);
   }
@@ -331,6 +344,7 @@ async function openExpertReview(documentId, push = true) {
   try {
     const document = await reviewRequest(`/expert/documents/${documentId}`);
     screen.innerHTML = renderReviewPage(document, true);
+    removeReviewHistoryPanel(screen);
   } catch (error) { screen.innerHTML = `<div class="review-workspace review-error">Unable to load document: ${reviewEscape(error.message)}</div>`; }
 }
 
@@ -355,6 +369,71 @@ function aiResultEntries(payload) {
     }
   }
   return entries;
+}
+
+function normalizeAiCode(value) {
+  return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function normalizeAiLabel(value) {
+  return String(value || "").trim().toLocaleLowerCase("vi-VN").replace(/\s+/g, " ");
+}
+
+function aiEntryMatchesCurrentLabel(entry, currentLabels) {
+  const item = entry.item || {};
+  const current = Array.isArray(currentLabels) ? currentLabels : [];
+  const currentCodes = new Set(
+    current.map(label => normalizeAiCode(label.code)).filter(Boolean),
+  );
+  const itemCode = normalizeAiCode(item.code || item.icd10_code || item.icd10Code);
+  if (itemCode && currentCodes.has(itemCode)) return true;
+
+  // A term match is intentionally limited to disease entities. Other AI
+  // categories may legitimately share a word with an ICD-10 label.
+  if (entry.category !== "Bệnh lý") return false;
+  const currentLabelsByName = new Set(
+    current.map(label => normalizeAiLabel(label.label)).filter(Boolean),
+  );
+  return [
+    item.term,
+    item.text,
+    item.label,
+    item.label_vn,
+    item.canonical_label,
+  ].some(value => {
+    const normalized = normalizeAiLabel(value);
+    return normalized && currentLabelsByName.has(normalized);
+  });
+}
+
+function filterAiPayloadByCurrentLabels(payload, currentLabels) {
+  if (!payload || typeof payload !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(payload).map(([category, values]) => [
+      category,
+      Array.isArray(values)
+        ? values.filter(raw => !aiEntryMatchesCurrentLabel(
+          { category, item: typeof raw === "string" ? { term: raw } : raw },
+          currentLabels,
+        ))
+        : values,
+    ]),
+  );
+}
+
+function aiPrimaryMatchesCurrentLabel(ai, currentLabels) {
+  if (!ai) return false;
+  return aiEntryMatchesCurrentLabel(
+    {
+      category: "Bệnh lý",
+      item: {
+        code: ai.primary_icd10_code,
+        label: ai.primary_icd10_label,
+        term: ai.primary_icd10_label,
+      },
+    },
+    currentLabels,
+  );
 }
 
 function renderAiText(text, payload) {
@@ -386,6 +465,44 @@ function renderAiText(text, payload) {
   return html.join("");
 }
 
+function renderNerText(text, nerLabels) {
+  const source = String(text || "Không có abstract được lưu trong database.");
+  if (!Array.isArray(nerLabels) || !nerLabels.length) return reviewEscape(source);
+  // Gom các term NER duy nhất (dùng label làm từ khóa tìm kiếm)
+  const terms = [...new Map(nerLabels.map(item => [String(item.label || "").trim().toLowerCase(), item])).values()]
+    .filter(item => item.label && item.label.trim());
+  // Tìm tất cả vị trí xuất hiện của mỗi term trong text (case-insensitive)
+  const candidates = [];
+  for (const item of terms) {
+    const term = item.label.trim();
+    const lower = source.toLowerCase();
+    const termLower = term.toLowerCase();
+    let idx = 0;
+    while ((idx = lower.indexOf(termLower, idx)) !== -1) {
+      candidates.push({ start: idx, end: idx + term.length, code: item.code || "", label: term, type: item.type || "" });
+      idx += term.length;
+    }
+  }
+  // Loại bỏ chồng lấp — ưu tiên match dài hơn
+  candidates.sort((a, b) => (b.end - b.start) - (a.end - a.start) || a.start - b.start);
+  const accepted = [];
+  for (const c of candidates) {
+    if (!accepted.some(a => c.start < a.end && c.end > a.start)) accepted.push(c);
+  }
+  accepted.sort((a, b) => a.start - b.start);
+  if (!accepted.length) return reviewEscape(source);
+  let cursor = 0;
+  const html = [];
+  for (const match of accepted) {
+    html.push(reviewEscape(source.slice(cursor, match.start)));
+    const title = [match.code, match.type].filter(Boolean).join(" · ");
+    html.push(`<mark class="ai-highlight ai-disease" title="${reviewEscape(title || "NER")}: ${reviewEscape(match.label)}">${reviewEscape(source.slice(match.start, match.end))}</mark>`);
+    cursor = match.end;
+  }
+  html.push(reviewEscape(source.slice(cursor)));
+  return html.join("");
+}
+
 function renderFullAiResult(payload) {
   const entries = aiResultEntries(payload);
   if (!entries.length) return '<div class="review-empty">AI không trả về thực thể nào.</div>';
@@ -400,18 +517,244 @@ function renderFullAiResult(payload) {
     </div></section>`).join("")}</div>`;
 }
 
+const aiAnalyzeState = {};
+
+function aiLabelsForDocument(documentData) {
+  return Array.isArray(documentData.aiLabels) && documentData.aiLabels.length
+    ? documentData.aiLabels
+    : (documentData.aiLabel ? [documentData.aiLabel] : []);
+}
+
+function aiLabelDisplayName(label, index) {
+  const model = String(label?.model_name || `Model ${index + 1}`).trim();
+  const created = label?.created_at ? ` · ${reviewDate(label.created_at)}` : "";
+  return `${model}${created}`;
+}
+
+function aiEntryKey(entry) {
+  const item = entry.item || {};
+  const code = normalizeAiCode(item.code || item.icd10_code || item.icd10Code);
+  const term = normalizeAiLabel(item.term || item.text || item.label_vn || item.label);
+  return `${normalizeAiLabel(entry.category)}|${code}|${term}`;
+}
+
+function aiEntrySpan(entry) {
+  const spans = Array.isArray(entry.item?.spans) ? entry.item.spans : [];
+  const first = spans.find(span => Number.isInteger(Number(span?.start)) && Number.isInteger(Number(span?.end)));
+  return first ? { start: Number(first.start), end: Number(first.end) } : null;
+}
+
+function aiDifferenceRows(leftLabel, rightLabel) {
+  const leftEntries = aiResultEntries(leftLabel?.labels || {});
+  const rightEntries = aiResultEntries(rightLabel?.labels || {});
+  const leftKeys = new Map(leftEntries.map(entry => [aiEntryKey(entry), entry]));
+  const rightKeys = new Map(rightEntries.map(entry => [aiEntryKey(entry), entry]));
+  const rows = [];
+  for (const [key, entry] of leftKeys.entries()) if (!rightKeys.has(key)) rows.push({ side: "left", key, entry });
+  for (const [key, entry] of rightKeys.entries()) if (!leftKeys.has(key)) rows.push({ side: "right", key, entry });
+  return rows;
+}
+
+function renderAiModelOptions(labels, selectedId, fallbackIndex) {
+  return labels.map((label, index) => {
+    const selected = Number(label.id) === Number(selectedId || labels[fallbackIndex]?.id) ? "selected" : "";
+    return `<option value="${Number(label.id)}" ${selected}>${reviewEscape(aiLabelDisplayName(label, index))}</option>`;
+  }).join("");
+}
+
+function renderFullAiResultWithDiffs(payload, diffKeys, side) {
+  const entries = aiResultEntries(payload);
+  if (!entries.length) return '<div class="review-empty">AI không trả về thực thể nào.</div>';
+  const groups = new Map();
+  for (const entry of entries) {
+    if (!groups.has(entry.category)) groups.set(entry.category, []);
+    groups.get(entry.category).push(entry);
+  }
+  return `<div class="ai-result-groups">${[...groups.entries()].map(([category, group]) => `
+    <section class="ai-result-group"><h4>${reviewEscape(category)} <span>${group.length}</span></h4><div class="ai-result-tags">
+      ${group.map(entry => {
+        const item = entry.item || {};
+        const diff = diffKeys.has(aiEntryKey(entry)) ? " ai-result-diff" : "";
+        const span = aiEntrySpan(entry);
+        const attrs = span ? ` onclick="focusAiDifference(${span.start}, ${span.end}, '${side}')"` : "";
+        return `<button type="button" class="ai-result-tag ai-${entry.style}${diff}"${attrs}>${reviewEscape(item.term || item.text)}${item.code ? `<small>${reviewEscape(item.code)}</small>` : ""}</button>`;
+      }).join("")}
+    </div></section>`).join("")}</div>`;
+}
+
+function renderAiExtractionColumn(documentData, side, label, differences, selectedId) {
+  const labels = aiLabelsForDocument(documentData);
+  const diffKeys = new Set(differences.filter(row => row.side === side).map(row => row.key));
+  const selectId = side === "left" ? "aiModelA" : "aiModelB";
+  const fallbackIndex = side === "left" ? 0 : 1;
+  const body = label ? renderFullAiResultWithDiffs(label.labels || {}, diffKeys, side) : '<div class="review-empty">Chưa có dữ liệu AI.</div>';
+  const primary = [label?.primary_icd10_code, label?.primary_icd10_label].filter(Boolean).join(" - ") || "Không có ICD-10 chính";
+  const confidence = label?.confidence == null ? "Không có confidence" : `${Math.round(Number(label.confidence) * 100)}% confidence`;
+  return `<section class="review-panel ai-extraction-column" data-ai-side="${side}"><div class="ai-column-head"><h3>AI Extraction</h3><select id="${selectId}" class="ai-model-select">${renderAiModelOptions(labels, selectedId, fallbackIndex)}</select></div><div class="ai-model-meta"><strong>${reviewEscape(primary)}</strong><span>${reviewEscape(confidence)}</span></div>${body}</section>`;
+}
+
+function renderAiAnalysisPanel(differences) {
+  if (!differences.length) return '<section class="review-panel ai-analysis-panel"><h3>Analyze Differences</h3><div class="review-empty">Không có khác biệt sau khi Analyze.</div></section>';
+  return `<section class="review-panel ai-analysis-panel"><div class="ai-analysis-head"><h3>Analyze Differences</h3><span>${differences.length} khác biệt</span></div><div class="ai-diff-list">${differences.map((row, index) => {
+    const item = row.entry.item || {};
+    const span = aiEntrySpan(row.entry);
+    const jump = span ? `focusAiDifference(${span.start}, ${span.end}, '${row.side}')` : "void(0)";
+    return `<article class="ai-diff-card"><button type="button" onclick="${jump}"><strong>${reviewEscape(item.term || item.text || "—")}</strong><span>${row.side === "left" ? "Chỉ model A có" : "Chỉ model B có"} · ${reviewEscape(row.entry.category)}${item.code ? ` · ${reviewEscape(item.code)}` : ""}</span></button><label>NOTE lỗi sai<textarea id="aiDiffNote${index}" placeholder="Ghi lỗi, dấu hiệu nhận biết, và cách sửa prompt..."></textarea></label><div class="ai-prompt-tools"><select id="aiDiffWrong${index}"><option value="left">Model A sai</option><option value="right">Model B sai</option><option value="prompt">Prompt gốc thiếu ràng buộc</option></select><button type="button" class="review-action" onclick="draftPromptFix(${index})">Tạo gợi ý sửa prompt</button></div><div class="ai-prompt-suggestion" id="aiPromptSuggestion${index}" data-term="${reviewEscape(item.term || item.text || "")}"></div></article>`;
+  }).join("")}</div></section>`;
+}
+
+function renderAiComparableText(text, differences) {
+  const source = String(text || "Không có abstract được lưu trong database.");
+  const spans = differences.map(row => aiEntrySpan(row.entry)).filter(Boolean);
+  spans.sort((a, b) => (b.end - b.start) - (a.end - a.start) || a.start - b.start);
+  const accepted = [];
+  for (const span of spans) {
+    if (span.end <= span.start || span.end > source.length) continue;
+    if (!accepted.some(item => span.start < item.end && span.end > item.start)) accepted.push(span);
+  }
+  accepted.sort((a, b) => a.start - b.start);
+  if (!accepted.length) return reviewEscape(source);
+  let cursor = 0;
+  const html = [];
+  for (const span of accepted) {
+    html.push(reviewEscape(source.slice(cursor, span.start)));
+    html.push(`<mark class="ai-highlight ai-diff-text" data-ai-start="${span.start}" data-ai-end="${span.end}">${reviewEscape(source.slice(span.start, span.end))}</mark>`);
+    cursor = span.end;
+  }
+  html.push(reviewEscape(source.slice(cursor)));
+  return html.join("");
+}
+
+function focusAiDifference(start, end, side) {
+  const source = document.getElementById("documentTextSource");
+  source?.querySelectorAll(".ai-focused-range").forEach(node => node.classList.remove("ai-focused-range"));
+  const mark = source?.querySelector(`[data-ai-start="${start}"][data-ai-end="${end}"]`);
+  if (mark) {
+    mark.classList.add("ai-focused-range");
+    mark.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+  document.querySelector(`[data-ai-side="${side}"]`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+function draftPromptFix(index) {
+  const note = document.getElementById(`aiDiffNote${index}`)?.value.trim();
+  const wrong = document.getElementById(`aiDiffWrong${index}`)?.value || "prompt";
+  const target = document.getElementById(`aiPromptSuggestion${index}`);
+  if (!target) return;
+  const term = target.dataset.term || "mục đang chọn";
+  const reason = note || "Kết quả khác giữa hai model, cần kiểm tra ngữ cảnh và bằng chứng nguồn.";
+  target.innerHTML = `<strong>Prompt gợi ý:</strong><p>Khi trích xuất '${reviewEscape(term)}', chỉ trả về nếu văn bản nêu trực tiếp thực thể/số liệu trong đúng ngữ cảnh. Nếu chỉ là tiêu đề, chữ ký, chú thích, hoặc không đủ bằng chứng thì đánh dấu uncertain và giải thích. Lỗi nghi ngờ: ${reviewEscape(wrong)}. Căn cứ sửa: ${reviewEscape(reason)}</p><strong>Dấu hiệu prompt đúng:</strong><p>Kết quả mới phải có span nguồn/trang tương ứng, không thêm dữ liệu ngoài văn bản, và giải thích vì sao giữ hoặc loại bỏ mục này.</p>`;
+}
+
+function analyzeAiModels(documentId) {
+  aiAnalyzeState[documentId] = {
+    leftId: Number(document.getElementById("aiModelA")?.value || 0),
+    rightId: Number(document.getElementById("aiModelB")?.value || 0),
+    analyzed: true,
+  };
+  openExpertReview(documentId, false, expertCurrentLabelSource);
+}
+
 function renderReviewPage(document, editable) {
   const labels = (document.currentLabels || []).map(item => `<div class="label-card"><strong>${reviewEscape(item.code || "No ICD-10 code")}</strong><span>${reviewEscape(item.label || "—")}</span><div class="muted">${reviewEscape(item.source || "")}</div></div>`).join("") || '<div class="review-empty">Không có nhãn hiện tại.</div>';
   const ai = document.aiLabel;
-  const aiContent = ai ? `<div class="label-card"><strong>${reviewEscape([ai.primary_icd10_code, ai.primary_icd10_label].filter(Boolean).join(" - ") || "Kết quả AI đã lưu")}</strong><span>Model: ${reviewEscape(ai.model_name)}</span><div class="muted">Confidence: ${ai.confidence == null ? "Không có dữ liệu" : `${Math.round(Number(ai.confidence) * 100)}%`}</div></div><h4 class="ai-full-result-title">Toàn bộ thực thể AI</h4>${renderFullAiResult(ai.labels)}` : '<div class="review-empty">Không có AI prediction đã lưu.</div>';
+  const filteredAiLabels = ai ? filterAiPayloadByCurrentLabels(ai.labels, document.currentLabels) : {};
+  const primaryPrediction = ai && !aiPrimaryMatchesCurrentLabel(ai, document.currentLabels)
+    ? [ai.primary_icd10_code, ai.primary_icd10_label].filter(Boolean).join(" - ")
+    : "";
+  const aiContent = ai ? `${primaryPrediction ? `<div class="label-card"><strong>${reviewEscape(primaryPrediction)}</strong></div>` : ""}<h4 class="ai-full-result-title">Toàn bộ thực thể AI</h4>${renderFullAiResult(filteredAiLabels)}` : '<div class="review-empty">Không có AI prediction đã lưu.</div>';
   const history = (document.reviewHistory || []).map(item => `<article class="history-card"><strong>${reviewEscape(item.expert_name || "Bạn")}</strong>${statusBadge(item.review_status)}<div class="muted">${reviewDate(item.created_at)}</div><p><b>Đề xuất:</b> ${reviewEscape([item.suggested_icd10_code, item.suggested_icd10_label].filter(Boolean).join(" - ") || "—")}</p><p>${reviewEscape(item.comment)}</p></article>`).join("") || '<div class="review-empty">Chưa có review trước đó.</div>';
-  const form = editable ? `<form class="review-form" onsubmit="return saveExpertReview(event, ${Number(document.id)})"><fieldset><legend>Expert Review</legend><label><input type="radio" name="reviewStatus" value="CORRECT" checked> Correct</label><label><input type="radio" name="reviewStatus" value="INCORRECT"> Incorrect</label><label><input type="radio" name="reviewStatus" value="NEEDS_REVISION"> Needs Revision</label></fieldset><label>ICD-10/YHCT đề xuất (bắt buộc nếu Incorrect hoặc Needs Revision)<input id="suggestedCode" maxlength="100" placeholder="Ví dụ: J15.9"></label><label>Expert Comment<textarea id="expertComment" required minlength="3" maxlength="8000" placeholder="Enter your review/comment here..."></textarea></label><p class="auth-error" id="reviewSaveError"></p><button class="review-save" type="submit">Save Review</button></form>` : '';
+  const form = editable ? `<form class="review-form" onsubmit="return saveExpertReview(event, ${Number(document.id)})"><fieldset><legend>Expert Review</legend><label><input type="radio" name="reviewStatus" value="CORRECT" checked> Correct</label><label><input type="radio" name="reviewStatus" value="INCORRECT"> Incorrect</label><label><input type="radio" name="reviewStatus" value="NEEDS_REVISION"> Needs Revision</label></fieldset><input type="hidden" name="labelSource" value="${reviewEscape(expertCurrentLabelSource)}"><section class="expert-annotation-editor"><div class="expert-editor-heading"><div><strong>Nhãn theo từng thực thể</strong><p class="expert-editor-help">Nhập đúng đoạn thực thể trong văn bản. Hệ thống sẽ tự xác định vị trí, không cần nhập offset.</p></div><button type="button" class="review-action" onclick="addExpertAnnotation(${Number(document.id)})">+ Thêm nhãn</button></div><div id="expertAnnotationRows">${renderExpertAnnotationRows(document)}</div></section><label>Expert Comment<textarea id="expertComment" required minlength="3" maxlength="8000" placeholder="Enter your review/comment here..."></textarea></label><p class="auth-error" id="reviewSaveError"></p><button class="review-save" type="submit">Save Review</button></form>` : '';
+  const _backView = ["icd10", "ai-labeled", "reviewed"].includes(reviewActiveView) ? reviewActiveView : "dashboard";
   const backAction = editable
-    ? `showExpertView('${reviewActiveView === 'reviewed' ? 'reviewed' : 'dashboard'}')`
+    ? `showExpertView('${_backView}')`
     : currentAuthUser?.role === "reviewer"
       ? "showReviewerView('reviews')"
       : "showAdminReviewView('reviews')";
-  return `<div class="review-workspace"><button class="review-action" onclick="${backAction}">← Quay lại</button><div class="review-layout" style="margin-top:14px"><div class="review-panel"><h3>${reviewEscape(document.title || "Không có tiêu đề")}</h3><p class="muted">${reviewEscape(document.authors || "Không rõ tác giả")} · ${reviewEscape(document.publication_year || "")}</p><h3 style="margin-top:18px">Original Medical Text</h3><div class="document-text">${renderAiText(document.abstract, ai?.labels)}</div>${form}</div><aside class="label-list"><div class="review-panel"><h3>Current ICD-10 Label</h3>${labels}</div><div class="review-panel"><h3>AI Prediction</h3>${aiContent}</div><div class="review-panel"><h3>Review History</h3><div class="history-list">${history}</div></div></aside></div></div>`;
+  const showAiPanel = expertCurrentLabelSource !== "icd10";
+  const textHtml = expertCurrentLabelSource === "icd10"
+    ? (document.nerResult?.highlightedHtml || renderNerText(document.abstract, document.currentLabels))
+    : renderAiText(document.abstract, filteredAiLabels);
+  const aiLabels = aiLabelsForDocument(document);
+  const state = aiAnalyzeState[document.id] || {};
+  const leftAi = aiLabels.find(label => Number(label.id) === Number(state.leftId)) || aiLabels[0] || null;
+  const rightAi = aiLabels.find(label => Number(label.id) === Number(state.rightId)) || aiLabels[1] || aiLabels[0] || null;
+  const differences = showAiPanel && state.analyzed ? aiDifferenceRows(leftAi, rightAi) : [];
+  const comparableText = showAiPanel ? renderAiComparableText(document.abstract, differences) : textHtml;
+  const aiWorkspace = showAiPanel ? `<div class="ai-review-actions"><button class="review-action" type="button" onclick="analyzeAiModels(${Number(document.id)})">Analyze</button><span>Chọn hai model rồi bấm Analyze để highlight số liệu khác nhau.</span></div><div class="ai-extraction-grid">${renderAiExtractionColumn(document, "left", leftAi, differences, state.leftId)}${renderAiExtractionColumn(document, "right", rightAi, differences, state.rightId)}</div>${renderAiAnalysisPanel(differences)}` : "";
+  return `<div class="review-workspace"><button class="review-action" onclick="${backAction}">← Quay lại</button><div class="review-layout ${showAiPanel ? "review-layout-ai" : ""}" style="margin-top:14px"><div class="review-panel document-review-main"><h3>${reviewEscape(document.title || "Không có tiêu đề")}</h3><p class="muted">${reviewEscape(document.authors || "Không rõ tác giả")} · ${reviewEscape(document.publication_year || "")}</p><h3 style="margin-top:18px">Original Medical Text</h3><div class="document-text" id="documentTextSource">${comparableText}</div>${form}</div>${showAiPanel ? `<aside class="label-list ai-label-list">${aiWorkspace}</aside>` : `<aside class="label-list"><div class="review-panel"><h3>Current ICD-10 Label</h3>${labels}</div><div class="review-panel"><h3>Review History</h3><div class="history-list">${history}</div></div></aside>`}</div></div>`;
+}
+
+function removeReviewHistoryPanel(container) {
+  const historyList = container.querySelector(".history-list");
+  historyList?.closest(".review-panel")?.remove();
+}
+
+function annotationCategories(selected) {
+  const values = ["DISEASE", "SYMPTOM", "TREATMENT", "LAB_TEST", "IMAGING", "TRAD_MED", "Khác"];
+  return values.map(value => `<option value="${value}" ${value === selected ? "selected" : ""}>${value}</option>`).join("");
+}
+
+function renderExpertAnnotationRows(document) {
+  const id = Number(document.id);
+  if (!expertAnnotationState[id]) {
+    expertAnnotationState[id] = (document.annotationSeed || []).map(item => ({ ...item, action: item.action || "KEEP" }));
+  }
+  return expertAnnotationState[id].map((item, index) => `
+    <div class="expert-annotation-row" data-index="${index}">
+      <button type="button" class="annotation-delete" onclick="removeExpertAnnotation(${id}, ${index})" aria-label="Xóa thực thể">Xóa</button>
+      <div class="expert-annotation-main">
+        <label class="annotation-field annotation-field-text"><span>Đoạn thực thể</span><input data-field="text" value="${reviewEscape(item.text)}" placeholder="Ví dụ: sụp mi"></label>
+        <label class="annotation-field annotation-field-action"><span>Thao tác</span><select data-field="action">${["KEEP", "EDIT", "DELETE", "ADD"].map(action => `<option value="${action}" ${item.action === action ? "selected" : ""}>${action}</option>`).join("")}</select></label>
+      </div>
+      <div class="expert-annotation-fields">
+        <label class="annotation-field"><span>Entity Name</span><input data-field="label" value="${reviewEscape(item.label || item.text)}" placeholder="Tên thực thể"></label>
+        <label class="annotation-field"><span>ICD-10 Code</span><input data-field="code" value="${reviewEscape(item.code)}" placeholder="Ví dụ: H02.4"></label>
+        <label class="annotation-field"><span>Entity Type</span><select data-field="type">${annotationCategories(item.type || item.category)}</select></label>
+      </div>
+    </div>`).join("") || '<div class="review-empty">Chưa có nhãn. Bấm “Thêm nhãn” để đánh dấu vùng bị thiếu.</div>';
+}
+
+function collectExpertAnnotations(form, documentId) {
+  const rows = [...form.querySelectorAll(".expert-annotation-row")];
+  const annotations = rows.map(row => {
+    const index = Number(row.dataset.index);
+    const previous = expertAnnotationState[documentId]?.[index] || {};
+    const value = field => row.querySelector(`[data-field="${field}"]`)?.value ?? "";
+    return {
+      text: value("text").trim(),
+      start: previous.start ?? null,
+      end: previous.end ?? null,
+      label: value("label").trim(),
+      code: value("code").trim(),
+      type: value("type"),
+      category: value("type"),
+      action: value("action"),
+    };
+  });
+  expertAnnotationState[documentId] = annotations;
+  return annotations;
+}
+
+function addExpertAnnotation(documentId) {
+  const form = document.querySelector(".review-form");
+  if (form) collectExpertAnnotations(form, documentId);
+  (expertAnnotationState[documentId] ||= []).push({
+    text: "", start: 0, end: 0, label: "", code: "", type: "DISEASE", action: "ADD",
+  });
+  const screen = document.getElementById("screen-expert-workspace");
+  if (screen && reviewerDetailDocument) return;
+  const article = { id: documentId, annotationSeed: expertAnnotationState[documentId] };
+  const rows = document.getElementById("expertAnnotationRows");
+  if (rows) rows.innerHTML = renderExpertAnnotationRows(article);
+}
+
+function removeExpertAnnotation(documentId, index) {
+  const form = document.querySelector(".review-form");
+  if (form) collectExpertAnnotations(form, documentId);
+  expertAnnotationState[documentId].splice(index, 1);
+  const rows = document.getElementById("expertAnnotationRows");
+  if (rows) rows.innerHTML = renderExpertAnnotationRows({ id: documentId, annotationSeed: expertAnnotationState[documentId] });
 }
 
 async function saveExpertReview(event, documentId) {
@@ -419,12 +762,13 @@ async function saveExpertReview(event, documentId) {
   const error = document.getElementById("reviewSaveError");
   error.textContent = "";
   const reviewStatus = document.querySelector('input[name="reviewStatus"]:checked')?.value;
-  const suggestedIcd10Code = document.getElementById("suggestedCode").value.trim();
+  const labelSource = document.querySelector('input[name="labelSource"]')?.value || "icd10";
+  const annotations = collectExpertAnnotations(event.currentTarget, documentId);
   const comment = document.getElementById("expertComment").value.trim();
   try {
-    await reviewRequest(`/expert/documents/${documentId}/reviews`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reviewStatus, suggestedIcd10Code, comment }) });
+    await reviewRequest(`/expert/documents/${documentId}/reviews`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reviewStatus, labelSource, annotations, comment }) });
     if (typeof showToast === "function") showToast("Review saved successfully.", "success");
-    openExpertReview(documentId);
+    openExpertReview(documentId, false, expertCurrentLabelSource);
   } catch (requestError) { error.textContent = `Unable to save review: ${requestError.message}`; }
   return false;
 }
@@ -625,6 +969,7 @@ async function openAdminReviewDocument(documentId) {
   try {
     const document = await reviewRequest(`/admin/documents/${documentId}`);
     screen.innerHTML = renderReviewPage(document, false);
+    removeReviewHistoryPanel(screen);
   } catch (error) { screen.innerHTML = `<div class="review-workspace review-error">Unable to load document: ${reviewEscape(error.message)}</div>`; }
 }
 
@@ -658,23 +1003,77 @@ function reviewerEntityCategory(item) {
   return String(item.category || item.type || item.entity_type || item.dictionary_type || "Khác").trim() || "Khác";
 }
 
+function reviewerCanonicalCategory(value) {
+  const key = String(value || "").trim().toLowerCase();
+  const aliases = {
+    "bệnh lý": "disease", disease: "disease",
+    "triệu chứng": "symptom", symptom: "symptom",
+    "điều trị": "treatment", treatment: "treatment",
+    "xét nghiệm": "lab_test", "lab_test": "lab_test", "lab test": "lab_test",
+    "hình ảnh": "imaging", imaging: "imaging",
+    "đông y": "trad_med", trad_med: "trad_med", "traditional medicine": "trad_med",
+  };
+  return aliases[key] || key.replace(/\s+/g, "_");
+}
+
 function reviewerEntityCode(item) {
   if (!item || typeof item !== "object") return "";
   return String(item.code || item.icd10_code || item.concept_code || item.label_code || "").trim();
 }
 
-function reviewerEntityList(review) {
+function reviewerEntityList(review, sourceText = "") {
   const raw = review?.annotations || review?.entities || review?.labels || review?.original_labels || [];
-  return Array.isArray(raw) ? raw.map((item) => ({
-    text: reviewerEntityText(item),
-    category: reviewerEntityCategory(item),
-    code: reviewerEntityCode(item),
-    spans: item && typeof item === "object" && Array.isArray(item.spans) ? item.spans : [],
-  })).filter((item) => item.text) : [];
+  const used = new Set();
+  return Array.isArray(raw) ? raw.map((item) => {
+    const text = reviewerEntityText(item);
+    let start = item && typeof item === "object" && Number.isInteger(Number(item.start)) ? Number(item.start) : null;
+    let end = item && typeof item === "object" && Number.isInteger(Number(item.end)) ? Number(item.end) : null;
+    if ((start == null || end == null) && sourceText && text) {
+      let cursor = 0;
+      while (true) {
+        const found = sourceText.toLocaleLowerCase().indexOf(text.toLocaleLowerCase(), cursor);
+        if (found < 0) break;
+        const candidate = `${found}:${found + text.length}`;
+        if (!used.has(candidate)) {
+          start = found;
+          end = found + text.length;
+          break;
+        }
+        cursor = found + 1;
+      }
+    }
+    if (start != null && end != null) used.add(`${start}:${end}`);
+    const category = reviewerEntityCategory(item);
+    return {
+      text, category, categoryKey: reviewerCanonicalCategory(category),
+      code: reviewerEntityCode(item),
+      label: item && typeof item === "object" ? String(item.label || item.text || "").trim() : text,
+      type: category, start, end,
+      action: item && typeof item === "object" ? String(item.action || "KEEP").toUpperCase() : "KEEP",
+      spans: item && typeof item === "object" && Array.isArray(item.spans) ? item.spans : [],
+    };
+  }).filter((item) => item.text) : [];
 }
 
-function reviewerKey(text, category, code = "") {
-  return `${String(text).normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim()}|${String(category).toLowerCase()}|${String(code).toLowerCase()}`;
+function reviewerPositionKey(entity) {
+  const text = String(entity?.text || "").normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
+  const start = Number.isInteger(entity?.start) ? entity.start : "";
+  const end = Number.isInteger(entity?.end) ? entity.end : "";
+  return `${start}:${end}|${text}`;
+}
+
+function reviewerExactKey(entity) {
+  return `${reviewerPositionKey(entity)}|${entity?.categoryKey || reviewerCanonicalCategory(entity?.category)}|${String(entity?.code || "").toLowerCase()}`;
+}
+
+function mergeSystemDefaultEntities(entities, defaults, sourceText) {
+  const merged = [...entities];
+  const systemEntities = reviewerEntityList({ annotations: defaults }, sourceText);
+  for (const systemEntity of systemEntities) {
+    const exists = merged.some((entity) => reviewerPositionKey(entity) === reviewerPositionKey(systemEntity));
+    if (!exists) merged.push({ ...systemEntity, action: "KEEP", source: "system-default" });
+  }
+  return merged;
 }
 
 function buildReviewerComparison(document) {
@@ -687,19 +1086,28 @@ function buildReviewerComparison(document) {
   const experts = [...latestByExpert.values()].sort((a, b) => new Date(a.created_at || 0) - new Date(b.created_at || 0));
   const a = experts[0] || {};
   const b = experts[1] || {};
-  const expertA = { name: a.expert_name || "Expert A", review: a, entities: reviewerEntityList(a) };
-  const expertB = { name: b.expert_name || "Expert B", review: b, entities: reviewerEntityList(b) };
+  const sourceText = String(document.abstract || "");
+  const systemDefaults = Array.isArray(document.annotationSeed) ? document.annotationSeed : [];
+  const expertAEntities = mergeSystemDefaultEntities(reviewerEntityList(a, sourceText), systemDefaults, sourceText);
+  const expertBEntities = mergeSystemDefaultEntities(reviewerEntityList(b, sourceText), systemDefaults, sourceText);
+  const expertA = { name: a.expert_name || "Expert A", review: a, entities: expertAEntities };
+  const expertB = { name: b.expert_name || "Expert B", review: b, entities: expertBEntities };
   const grouped = new Map();
   for (const side of [expertA, expertB]) {
     for (const entity of side.entities) {
-      const base = reviewerKey(entity.text, entity.category);
+      const base = reviewerPositionKey(entity);
       if (!grouped.has(base)) grouped.set(base, { id: `entity-${grouped.size}`, entity: entity.text, category: entity.category, a: null, b: null });
       grouped.get(base)[side === expertA ? "a" : "b"] = entity;
     }
   }
   const rows = [...grouped.values()].map((row) => {
-    const exact = row.a && row.b && reviewerKey(row.a.text, row.a.category, row.a.code) === reviewerKey(row.b.text, row.b.category, row.b.code);
-    const status = exact ? "agree" : row.a && row.b ? "partial" : "conflict";
+    const exact = row.a && row.b && reviewerExactKey(row.a) === reviewerExactKey(row.b)
+      && (row.a.action === "DELETE") === (row.b.action === "DELETE");
+    const status = !row.a || !row.b
+      ? "conflict"
+      : row.a.action === "DELETE" || row.b.action === "DELETE"
+        ? "conflict"
+        : exact ? "agree" : "partial";
     if (!(row.id in reviewerDecisionState)) reviewerDecisionState[row.id] = { decision: status === "agree" ? "agree" : "", custom: "" };
     return { ...row, status };
   });
@@ -712,7 +1120,8 @@ function reviewerStatusLabel(status) {
 
 function reviewerEntityValue(entity) {
   if (!entity) return "Không có nhãn";
-  return `${entity.text}${entity.code ? ` · ${entity.code}` : ""}`;
+  const deleted = entity.action === "DELETE" ? " · ĐÃ XÓA" : "";
+  return `${entity.text}${entity.code ? ` · ${entity.code}` : ""}${deleted}`;
 }
 
 function reviewerTextMarkup(document, comparison) {
@@ -724,8 +1133,9 @@ function reviewerTextMarkup(document, comparison) {
     if (spans.length) {
       for (const span of spans) candidates.push({ start: Number(span.start), end: Number(span.end), row });
     } else {
-      const index = source.toLocaleLowerCase().indexOf(row.entity.toLocaleLowerCase());
-      if (index >= 0) candidates.push({ start: index, end: index + row.entity.length, row });
+      const index = Number.isInteger(row.a?.start) ? row.a.start : Number.isInteger(row.b?.start) ? row.b.start : source.toLocaleLowerCase().indexOf(row.entity.toLocaleLowerCase());
+      const end = Number.isInteger(row.a?.end) ? row.a.end : Number.isInteger(row.b?.end) ? row.b.end : index + row.entity.length;
+      if (index >= 0) candidates.push({ start: index, end, row });
     }
   }
   candidates.sort((a, b) => (a.end - a.start) - (b.end - b.start) || a.start - b.start);
@@ -755,13 +1165,13 @@ function reviewerGroupedRows(rows, side) {
     if (!groups.has(row.category)) groups.set(row.category, []);
     groups.get(row.category).push({ row, entity });
   }
-  return [...groups.entries()].map(([category, values]) => `<section class="reviewer-category"><h4>${reviewEscape(category)} <span>${values.length}</span></h4>${values.map(({ row, entity }) => `<div class="reviewer-entity-row"><span class="reviewer-entity-icon">${row.status === "agree" ? "✓" : row.status === "partial" ? "↔" : "!"}</span><div><strong>${reviewEscape(reviewerEntityValue(entity))}</strong><small>${reviewEscape(reviewerStatusLabel(row.status))}</small></div></div>`).join("")}</section>`).join("") || '<div class="review-empty">Chưa có dữ liệu.</div>';
+  return [...groups.entries()].map(([category, values]) => `<section class="reviewer-category"><h4>${reviewEscape(category)} <span>${values.length}</span></h4>${values.map(({ row, entity }) => `<div class="reviewer-entity-row reviewer-entity-row-${side}"><span class="reviewer-entity-icon">${row.status === "agree" ? "✓" : row.status === "partial" ? "↔" : "!"}</span><div><strong>${reviewEscape(reviewerEntityValue(entity))}</strong><small>${reviewEscape(reviewerStatusLabel(row.status))}</small></div></div>`).join("")}</section>`).join("") || '<div class="review-empty">Chưa có dữ liệu.</div>';
 }
 
 function reviewerDecisionHtml(row) {
   if (row.status === "agree") return "";
   const state = reviewerDecisionState[row.id] || {};
-  return `<article class="reviewer-decision-card"><div class="reviewer-decision-title"><div><strong>${reviewEscape(row.entity)}</strong><span>${reviewEscape(row.category)}</span></div>${statusBadge(row.status === "partial" ? "Khác biệt" : "Mâu thuẫn")}</div><div class="reviewer-choice-row"><button class="${state.decision === "expert_a" ? "selected" : ""}" onclick="setReviewerDecision('${row.id}', 'expert_a')">Theo A</button><button class="${state.decision === "expert_b" ? "selected" : ""}" onclick="setReviewerDecision('${row.id}', 'expert_b')">Theo B</button><button class="${state.decision === "custom" ? "selected" : ""}" onclick="setReviewerDecision('${row.id}', 'custom')">Tự sửa nhãn</button></div><div class="reviewer-side-values"><span>A: ${reviewEscape(reviewerEntityValue(row.a))}</span><span>B: ${reviewEscape(reviewerEntityValue(row.b))}</span></div>${state.decision === "custom" ? `<input class="reviewer-custom-input" value="${reviewEscape(state.custom)}" oninput="setReviewerCustom('${row.id}', this.value)" placeholder="Nhập nhãn cuối cùng">` : ""}</article>`;
+  return `<article class="reviewer-decision-card"><div class="reviewer-decision-title"><div><strong>${reviewEscape(row.entity)}</strong><span>${reviewEscape(row.category)} · ${row.a?.start ?? row.b?.start}:${row.a?.end ?? row.b?.end}</span></div>${statusBadge(row.status === "partial" ? "Khác biệt" : "Mâu thuẫn")}</div><div class="reviewer-choice-row"><button class="${state.decision === "expert_a" ? "selected" : ""}" onclick="setReviewerDecision('${row.id}', 'expert_a')">Theo A</button><button class="${state.decision === "expert_b" ? "selected" : ""}" onclick="setReviewerDecision('${row.id}', 'expert_b')">Theo B</button><button class="${state.decision === "custom" ? "selected" : ""}" onclick="setReviewerDecision('${row.id}', 'custom')">Tự sửa nhãn</button></div><div class="reviewer-side-values"><span>A: ${reviewEscape(reviewerEntityValue(row.a))}</span><span>B: ${reviewEscape(reviewerEntityValue(row.b))}</span></div>${state.decision === "custom" ? `<div class="reviewer-custom-fields"><input class="reviewer-custom-input" value="${reviewEscape(state.customText || row.entity)}" oninput="setReviewerCustomField('${row.id}', 'text', this.value)" placeholder="Đoạn text"><input class="reviewer-custom-input" value="${reviewEscape(state.customLabel || row.entity)}" oninput="setReviewerCustomField('${row.id}', 'label', this.value)" placeholder="Nhãn"><input class="reviewer-custom-input" value="${reviewEscape(state.customType || row.category)}" oninput="setReviewerCustomField('${row.id}', 'type', this.value)" placeholder="Loại nhãn"><input class="reviewer-custom-input" value="${reviewEscape(state.customCode || '')}" oninput="setReviewerCustomField('${row.id}', 'code', this.value)" placeholder="Mã ICD-10"></div>` : ""}</article>`;
 }
 
 function renderReviewerTable(comparison) {
@@ -775,6 +1185,11 @@ function renderReviewerDetails(document) {
   if (adjudication?.decisions) {
     for (const saved of adjudication.decisions) if (saved.id && reviewerDecisionState[saved.id]) reviewerDecisionState[saved.id] = saved;
   }
+  const resolutionStatus = String(document.resolutionStatus || (adjudication?.resolution_status || (conflicts.length ? "CONFLICT" : "PENDING"))).toUpperCase();
+  const finalLabels = adjudication?.final_labels || [];
+  const finalLabelsHtml = finalLabels.length
+    ? `<section class="review-panel reviewer-final-panel"><div class="reviewer-panel-heading"><div><h3>Nhãn cuối cùng</h3><p>Bộ nhãn đã được reviewer xác nhận.</p></div><span class="reviewer-status reviewer-status-agree">${reviewEscape(resolutionStatus)}</span></div><div class="reviewer-final-labels">${finalLabels.map(item => `<span>${reviewEscape(item.label || item.text)}${item.code ? ` · ${reviewEscape(item.code)}` : ""}</span>`).join("")}</div></section>`
+    : "";
   const comparisonContent = reviewerDetailMode === "table"
     ? `<section class="review-panel reviewer-table-panel">${renderReviewerTable(comparison)}</section>`
     : `<div class="reviewer-main-grid">
@@ -793,9 +1208,10 @@ function renderReviewerDetails(document) {
   const selectedCount = conflicts.filter((row) => reviewerDecisionState[row.id]?.decision).length;
   return `<div class="reviewer-detail-page">
     <div class="reviewer-detail-toolbar"><button class="review-action" onclick="showReviewerView('reviews')">← Quay lại</button><div class="reviewer-view-toggle"><button class="${reviewerDetailMode === "text" ? "active" : ""}" onclick="setReviewerDetailMode('text')">Text view</button><button class="${reviewerDetailMode === "table" ? "active" : ""}" onclick="setReviewerDetailMode('table')">Table view</button></div></div>
-    <section class="reviewer-case-header"><div><div class="reviewer-eyebrow">REVIEW DETAILS · CASE #${Number(document.id)}</div><h2>${reviewEscape(document.title || "Không có tiêu đề")}</h2><p>${reviewEscape(document.authors || "Không rõ tác giả")} · ${reviewEscape(document.publication_year || "")}</p></div><div class="reviewer-case-meta"><strong>${conflicts.length}</strong><span>mục cần quyết định</span></div></section>
+    <section class="reviewer-case-header"><div><div class="reviewer-eyebrow">REVIEW DETAILS · CASE #${Number(document.id)}</div><h2>${reviewEscape(document.title || "Không có tiêu đề")}</h2><p>${reviewEscape(document.authors || "Không rõ tác giả")} · ${reviewEscape(document.publication_year || "")}</p><span class="reviewer-case-status reviewer-case-status-${resolutionStatus.toLowerCase()}">${reviewEscape(resolutionStatus)}</span></div><div class="reviewer-case-meta"><strong>${conflicts.length}</strong><span>mục cần quyết định</span></div></section>
     <div class="reviewer-legend"><span><i class="legend-agree"></i> Hai chuyên gia đồng ý</span><span><i class="legend-partial"></i> Khác biệt một phần</span><span><i class="legend-conflict"></i> Mâu thuẫn</span><span class="reviewer-tooltip-hint">Di chuột lên vùng màu để xem nhãn A/B</span></div>
     ${comparisonContent}
+    ${finalLabelsHtml}
     <section class="review-panel reviewer-decision-panel"><div class="reviewer-panel-heading"><div><h3>Quyết định reviewer</h3><p>Chọn phương án cho từng thực thể chưa thống nhất, sau đó xác nhận toàn bộ case.</p></div><span class="reviewer-progress">${selectedCount}/${conflicts.length} đã chọn</span></div><div class="reviewer-decision-list">${conflicts.map(reviewerDecisionHtml).join("") || '<div class="review-empty">Hai chuyên gia đã đồng thuận toàn bộ.</div>'}</div><label class="reviewer-note-label">Ghi chú tổng thể<textarea id="reviewerOverallNote" maxlength="8000" placeholder="Ghi lại lý do hoặc lưu ý cho quyết định cuối...">${reviewEscape(adjudication?.note || "")}</textarea></label><div class="reviewer-confirm-row"><span id="reviewerSaveMessage" class="muted"></span><button class="review-save" onclick="saveReviewerAdjudication(${Number(document.id)})">Xác nhận tổng thể</button></div></section>
   </div>`;
 }
@@ -816,10 +1232,17 @@ function setReviewerCustom(rowId, value) {
   reviewerDecisionState[rowId] = { ...(reviewerDecisionState[rowId] || {}), decision: "custom", custom: value };
 }
 
+function setReviewerCustomField(rowId, field, value) {
+  reviewerDecisionState[rowId] = { ...(reviewerDecisionState[rowId] || {}), decision: "custom", [`custom${field[0].toUpperCase()}${field.slice(1)}`]: value };
+}
+
 async function saveReviewerAdjudication(documentId) {
   const comparison = reviewerDetailComparison || buildReviewerComparison(reviewerDetailDocument || {});
   const conflicts = comparison.rows.filter((row) => row.status !== "agree");
-  const incomplete = conflicts.find((row) => !reviewerDecisionState[row.id]?.decision || (reviewerDecisionState[row.id].decision === "custom" && !reviewerDecisionState[row.id].custom?.trim()));
+  const incomplete = conflicts.find((row) => {
+    const state = reviewerDecisionState[row.id];
+    return !state?.decision || (state.decision === "custom" && !(state.customText || row.entity).trim());
+  });
   const message = document.getElementById("reviewerSaveMessage");
   if (incomplete) {
     message.textContent = `Chưa chọn quyết định cho: ${incomplete.entity}`;
@@ -828,11 +1251,33 @@ async function saveReviewerAdjudication(documentId) {
   }
   try {
     const note = document.getElementById("reviewerOverallNote")?.value.trim() || "";
-    const decisions = conflicts.map((row) => ({ id: row.id, entity: row.entity, category: row.category, status: row.status, ...reviewerDecisionState[row.id] }));
-    await reviewRequest(`/reviewer/documents/${documentId}/adjudication`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decisions, note }) });
+    const decisions = conflicts.map((row) => ({ id: row.id, entity: row.entity, category: row.category, status: row.status, start: row.a?.start ?? row.b?.start, end: row.a?.end ?? row.b?.end, ...reviewerDecisionState[row.id] }));
+    const finalLabels = comparison.rows.flatMap((row) => {
+      const state = reviewerDecisionState[row.id] || {};
+      if (row.status === "agree") return row.a ? [{ ...row.a, action: "KEEP" }] : [];
+      if (state.decision === "expert_a") return row.a && row.a.action !== "DELETE" ? [{ ...row.a, action: "KEEP" }] : [];
+      if (state.decision === "expert_b") return row.b && row.b.action !== "DELETE" ? [{ ...row.b, action: "KEEP" }] : [];
+      if (state.decision === "custom") return [{
+        text: state.customText || row.entity,
+        label: state.customLabel || row.entity,
+        type: state.customType || row.category,
+        category: state.customType || row.category,
+        code: state.customCode || "",
+        start: row.a?.start ?? row.b?.start ?? 0,
+        end: row.a?.end ?? row.b?.end ?? 0,
+        action: "KEEP",
+      }];
+      return [];
+    });
+    await reviewRequest(`/reviewer/documents/${documentId}/adjudication`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ decisions, finalLabels, resolutionStatus: "RESOLVED", note }) });
     message.textContent = "Đã lưu quyết định reviewer.";
     message.className = "reviewer-save-success";
     if (typeof showToast === "function") showToast("Đã xác nhận kết quả review.", "success");
+    if (reviewerDetailDocument) {
+      reviewerDetailDocument.adjudication = { ...(reviewerDetailDocument.adjudication || {}), decisions, final_labels: finalLabels, resolution_status: "RESOLVED", note };
+      reviewerDetailDocument.resolutionStatus = "RESOLVED";
+      message.closest(".reviewer-detail-page")?.replaceWith(document.createRange().createContextualFragment(renderReviewerDetails(reviewerDetailDocument)));
+    }
   } catch (error) {
     message.textContent = error.message;
     message.className = "auth-error";

@@ -117,7 +117,9 @@ def ensure_auth_review_schema(db_config: dict[str, Any]) -> None:
                 document_id INT UNSIGNED NOT NULL,
                 expert_id BIGINT UNSIGNED NOT NULL,
                 review_status VARCHAR(32) NOT NULL,
+                label_source VARCHAR(16) NOT NULL DEFAULT 'icd10',
                 original_labels_json LONGTEXT NOT NULL,
+                annotations_json LONGTEXT NOT NULL,
                 suggested_icd10_code VARCHAR(100) NULL,
                 suggested_icd10_label VARCHAR(500) NULL,
                 comment TEXT NOT NULL,
@@ -137,6 +139,33 @@ def ensure_auth_review_schema(db_config: dict[str, Any]) -> None:
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """
         )
+        # Add fields to installations created before per-entity review data.
+        for column, definition in (
+            ("label_source", "VARCHAR(16) NOT NULL DEFAULT 'icd10'"),
+            ("annotations_json", "LONGTEXT NULL"),
+        ):
+            cursor.execute(
+                "SELECT COUNT(*) FROM information_schema.columns "
+                "WHERE table_schema = DATABASE() AND table_name = 'expert_reviews' AND column_name = %s",
+                (column,),
+            )
+            if not cursor.fetchone()[0]:
+                cursor.execute(f"ALTER TABLE expert_reviews ADD COLUMN {column} {definition}")
+        cursor.execute(
+            "UPDATE expert_reviews SET annotations_json = original_labels_json "
+            "WHERE annotations_json IS NULL"
+        )
+        for column, definition in (
+            ("concept_start", "INT NULL"),
+            ("concept_end", "INT NULL"),
+        ):
+            cursor.execute(
+                "SELECT COUNT(*) FROM information_schema.columns "
+                "WHERE table_schema = DATABASE() AND table_name = 'extracted_concepts' AND column_name = %s",
+                (column,),
+            )
+            if not cursor.fetchone()[0]:
+                cursor.execute(f"ALTER TABLE extracted_concepts ADD COLUMN {column} {definition}")
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS reviewer_adjudications (
@@ -144,6 +173,8 @@ def ensure_auth_review_schema(db_config: dict[str, Any]) -> None:
                 document_id INT UNSIGNED NOT NULL,
                 reviewer_id BIGINT UNSIGNED NOT NULL,
                 decision_payload LONGTEXT NOT NULL,
+                final_labels_json LONGTEXT NULL,
+                resolution_status VARCHAR(24) NOT NULL DEFAULT 'CONFLICT',
                 note TEXT NOT NULL,
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (id),
@@ -156,6 +187,17 @@ def ensure_auth_review_schema(db_config: dict[str, Any]) -> None:
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """
         )
+        for column, definition in (
+            ("final_labels_json", "LONGTEXT NULL"),
+            ("resolution_status", "VARCHAR(24) NOT NULL DEFAULT 'CONFLICT'"),
+        ):
+            cursor.execute(
+                "SELECT COUNT(*) FROM information_schema.columns "
+                "WHERE table_schema = DATABASE() AND table_name = 'reviewer_adjudications' AND column_name = %s",
+                (column,),
+            )
+            if not cursor.fetchone()[0]:
+                cursor.execute(f"ALTER TABLE reviewer_adjudications ADD COLUMN {column} {definition}")
         connection.commit()
     finally:
         if cursor:

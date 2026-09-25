@@ -66,6 +66,8 @@ async function loadAuthenticatedUser() {
 
 function renderAuthenticatedIdentity(user) {
   const identity = document.getElementById("userIdentity");
+  if (!identity) return;
+
   document.getElementById("currentUserName").textContent = user.name;
   document.getElementById("currentUserRole").textContent =
     user.role === "admin" ? "Admin" : user.role === "reviewer" ? "Reviewer" : "Expert";
@@ -181,6 +183,7 @@ const SCREENS = {
   "tamanh-crawler": { title: "Crawler hỏi đáp y khoa", sub: "Tâm Anh Hospital — Q&A công khai" },
   labeling:     { title: "Gán nhãn văn bản",    sub: "Xử lý & gán nhãn NER" },
   "ai-label":   { title: "AI Gán nhãn",         sub: "Gán nhãn thực thể y khoa bằng AI" },
+  "ai-evaluation": { title: "Đánh giá AI", sub: "Chạy, so sánh và lưu checkpoint NER" },
   logs:         { title: "Nhật ký thu thập",    sub: "Lịch sử thu thập" },
   "split-pdf":  { title: "Tách nội dung PDF",    sub: "Tách bài báo y học thành file văn bản" },
 };
@@ -208,7 +211,124 @@ function switchScreen(name) {
   if (name === "dashboard")  loadDashboard();
   if (name === "labeling")   loadData();
   if (name === "ai-label")   loadAiLabelData();
+  if (name === "ai-evaluation") loadNerExperiments();
   if (name === "logs")       loadCrawlLogs();
+}
+
+let activeNerExperimentId = null;
+let nerExperimentPoll = null;
+
+function nerStatusLabel(status) {
+  return ({ queued: "Đang chờ", running: "Đang chạy", stopping: "Đang dừng", stopped: "Đã dừng", completed: "Hoàn tất", completed_with_errors: "Hoàn tất có lỗi", failed: "Thất bại" })[status] || status;
+}
+
+function renderNerProgress(run) {
+  ["current_ai", "vietbioner", "vimedner"].forEach(system => {
+    const card = document.querySelector(`.evaluation-system[data-system="${system}"]`);
+    const info = run?.systems?.[system] || { completed: 0, total: 100, apiErrors: 0, averageLatencyMs: 0, status: "queued" };
+    if (!card) return;
+    const percent = info.total ? Math.round(100 * info.completed / info.total) : 0;
+    card.querySelector(".status-badge").textContent = nerStatusLabel(info.status);
+    card.querySelector(".progress-track span").style.width = `${percent}%`;
+    card.querySelector(".evaluation-stats").textContent = `${info.completed} / ${info.total} · lỗi API ${info.apiErrors} · TB ${Math.round(info.averageLatencyMs || 0)} ms`;
+  });
+  const isAdmin = currentAuthUser?.role === "admin";
+  const running = ["queued", "running", "stopping"].includes(run?.status);
+  document.getElementById("evaluationAdminActions").hidden = !isAdmin;
+  document.getElementById("btnStartEvaluation").disabled = running;
+  document.getElementById("btnStopEvaluation").disabled = !running;
+  document.getElementById("btnResumeEvaluation").disabled = !run || !["stopped", "failed", "completed_with_errors"].includes(run.status);
+}
+
+function renderNerMetrics(metrics) {
+  const target = document.getElementById("evaluationMetrics");
+  if (!metrics || !Object.keys(metrics).length) {
+    target.className = "evaluation-metrics-empty";
+    target.textContent = "Chưa có đủ gold 5 nhãn để tính Precision, Recall và F1.";
+    return;
+  }
+  const rows = [];
+  Object.entries(metrics).forEach(([system, modes]) => {
+    ["exact", "relaxed"].forEach(mode => {
+      const result = modes[mode];
+      rows.push(`<tr><td>${escapeHtml(system)} · ${mode}</td><td>${(100 * result.macro.precision).toFixed(2)}</td><td>${(100 * result.macro.recall).toFixed(2)}</td><td>${(100 * result.macro.f1).toFixed(2)}</td><td>${(100 * result.micro.f1).toFixed(2)}</td></tr>`);
+    });
+  });
+  target.className = "";
+  target.innerHTML = `<table class="evaluation-metric-table"><thead><tr><th>Hệ thống</th><th>Macro-P</th><th>Macro-R</th><th>Macro-F1</th><th>Micro-F1</th></tr></thead><tbody>${rows.join("")}</tbody></table>`;
+}
+
+async function selectNerExperiment(runId) {
+  activeNerExperimentId = runId;
+  const [detailResponse, errorsResponse] = await Promise.all([
+    fetch(`${API_BASE}/ner-experiments/${encodeURIComponent(runId)}`),
+    fetch(`${API_BASE}/ner-experiments/${encodeURIComponent(runId)}/errors`),
+  ]);
+  const detail = await detailResponse.json();
+  const errors = await errorsResponse.json();
+  if (!detailResponse.ok) throw new Error(detail.detail || "Không tải được run.");
+  renderNerProgress(detail);
+  renderNerMetrics(detail.metrics);
+  const rows = (errors.errors || []).slice(0, 200).map(item => `<tr><td>${escapeHtml(item.system)}</td><td>#${escapeHtml(item.article_id || "-")}</td><td>${escapeHtml(item.type || item.error || "-")}</td><td><code>${escapeHtml(JSON.stringify(item.entity || item.detail || item.kept || {}))}</code></td></tr>`).join("");
+  document.getElementById("evaluationErrorsBody").innerHTML = rows || `<tr><td colspan="4" class="table-empty">Không có lỗi chuyển đổi được ghi nhận.</td></tr>`;
+  if (["queued", "running", "stopping"].includes(detail.status)) {
+    clearTimeout(nerExperimentPoll);
+    nerExperimentPoll = setTimeout(() => loadNerExperiments(true), 2500);
+  }
+}
+
+async function loadNerExperiments(keepSelection = false) {
+  try {
+    const response = await fetch(`${API_BASE}/ner-experiments`, { cache: "no-store" });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.detail || "Không tải được lịch sử thí nghiệm.");
+    const runs = payload.runs || [];
+    const isAdmin = currentAuthUser?.role === "admin";
+    document.getElementById("evaluationAdminActions").hidden = !isAdmin;
+    document.getElementById("evaluationRunSummary").textContent = `${runs.length} checkpoint · dữ liệu lịch sử không bị ghi đè`;
+    document.getElementById("evaluationRunsBody").innerHTML = runs.map(run => {
+      const systems = Object.values(run.systems || {});
+      const completed = systems.reduce((sum, item) => sum + Number(item.completed || 0), 0);
+      const total = systems.reduce((sum, item) => sum + Number(item.total || 0), 0);
+      const errors = systems.reduce((sum, item) => sum + Number(item.apiErrors || 0), 0);
+      const promote = isAdmin && ["completed", "completed_with_errors"].includes(run.status) ? `<button class="btn-outline-sm" onclick="event.stopPropagation(); promoteNerExperiment('${escapeHtml(run.runId)}')">Chọn bản này</button>` : "";
+      return `<tr onclick="selectNerExperiment('${escapeHtml(run.runId)}')"><td><code>${escapeHtml(run.runId)}</code></td><td>${escapeHtml(nerStatusLabel(run.status))}</td><td>${completed}/${total}</td><td>${errors}</td><td>${escapeHtml(run.note || "-")}</td><td>${promote}</td></tr>`;
+    }).join("") || `<tr><td colspan="6" class="table-empty">Chưa có checkpoint.</td></tr>`;
+    const target = keepSelection && runs.some(run => run.runId === activeNerExperimentId) ? activeNerExperimentId : runs[0]?.runId;
+    if (target) await selectNerExperiment(target); else renderNerProgress(null);
+  } catch (error) {
+    showToast(error.message, "error");
+  }
+}
+
+async function startNerExperiment() {
+  const note = document.getElementById("evaluationNote").value.trim();
+  const response = await fetch(`${API_BASE}/ner-experiments`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ limit: 100, note, parentRunId: activeNerExperimentId }) });
+  const payload = await response.json();
+  if (!response.ok) return showToast(payload.detail || "Không thể tạo run.", "error");
+  activeNerExperimentId = payload.runId;
+  showToast("Đã tạo checkpoint và bắt đầu chạy nền.", "success");
+  loadNerExperiments(true);
+}
+
+async function stopNerExperiment() {
+  if (!activeNerExperimentId) return;
+  await fetch(`${API_BASE}/ner-experiments/${encodeURIComponent(activeNerExperimentId)}/stop`, { method: "POST" });
+  loadNerExperiments(true);
+}
+
+async function resumeNerExperiment() {
+  if (!activeNerExperimentId) return;
+  const response = await fetch(`${API_BASE}/ner-experiments/${encodeURIComponent(activeNerExperimentId)}/resume`, { method: "POST" });
+  const payload = await response.json();
+  if (!response.ok) return showToast(payload.detail || "Không thể tiếp tục run.", "error");
+  loadNerExperiments(true);
+}
+
+async function promoteNerExperiment(runId) {
+  const response = await fetch(`${API_BASE}/ner-experiments/${encodeURIComponent(runId)}/promote`, { method: "POST" });
+  const payload = await response.json();
+  showToast(response.ok ? "Đã chọn bản hiện hành." : (payload.detail || "Không thể promote."), response.ok ? "success" : "error");
 }
 
 // ============================================================
@@ -334,18 +454,6 @@ async function stopTamanhCrawler() {
 
 
 // ============================================================
-// CLOCK
-// ============================================================
-function updateClock() {
-  const now = new Date();
-  const str = now.toLocaleDateString("vi-VN", { weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" })
-            + "  " + now.toLocaleTimeString("vi-VN");
-  document.getElementById("topbarClock").textContent = str;
-}
-setInterval(updateClock, 1000);
-updateClock();
-
-// ============================================================
 // SERVER STATUS CHECK
 // ============================================================
 let serverHealthFailures = 0;
@@ -444,8 +552,9 @@ async function loadKPIs() {
       fetch(`${API_BASE}/top-concepts?limit=100`).then(r => r.json()),
     ]);
 
-    // API list trả về is_labeled (0/1), không trả về highlighted_html
-    const labeled = articles.filter(a => a.is_labeled || a.highlighted_html).length;
+    // API list trả về is_labeled (NER) và is_ai_labeled (AI)
+    const labeled    = articles.filter(a => a.is_labeled || a.highlighted_html).length;
+    const aiLabeled  = articles.filter(a => a.is_ai_labeled).length;
 
     animateCount("kpi-articles", articles.length);
     animateCount("kpi-labeled",  labeled);
@@ -453,7 +562,7 @@ async function loadKPIs() {
       ? concepts.reduce((s, c) => s + (c.frequency || 0), 0) : 0);
 
     document.getElementById("kpi-articles-sub").textContent =
-      `${labeled} đã gán nhãn / ${articles.length} tổng`;
+      `${labeled} NER · ${aiLabeled} AI / ${articles.length} tổng`;
 
     // Draw donut
     buildDonut(concepts);
@@ -852,10 +961,6 @@ function setArticleFilter(filter, btn) {
 }
 
 async function loadData() {
-  if (currentArticlesData && currentArticlesData.length > 0) {
-    renderArticleList();
-    return;
-  }
   const query = (document.getElementById("searchInput")?.value || "").trim();
   const scroll = document.getElementById("articleListScroll");
   if (scroll) scroll.innerHTML = `<div class="list-placeholder">Đang tải...</div>`;
@@ -863,7 +968,8 @@ async function loadData() {
     const url  = query
       ? `${API_BASE}/articles?q=${encodeURIComponent(query)}`
       : `${API_BASE}/articles`;
-    const data = await fetch(url).then(r => r.json());
+    const separator = url.includes("?") ? "&" : "?";
+    const data = await fetch(`${url}${separator}_refresh=${Date.now()}`, { cache: "no-store" }).then(r => r.json());
     currentArticlesData = Array.isArray(data) ? data : [];
     renderArticleList();
   } catch {
@@ -1580,10 +1686,9 @@ async function verifyData() {
 // ============================================================
 
 async function loadAiLabelData() {
-  if (aiLabelArticlesData && aiLabelArticlesData.length > 0) return;
   const listEl = document.getElementById("aiArticleListScroll");
   try {
-    const res = await fetch(`${API_BASE}/articles`);
+    const res = await fetch(`${API_BASE}/articles?_refresh=${Date.now()}`, { cache: "no-store" });
     aiLabelArticlesData = await res.json();
     if (aiLabelArticlesData.length > 0) {
       currentAiArticleId = aiLabelArticlesData[0].id;
@@ -1605,18 +1710,20 @@ function filterAiArticles() {
   });
 
   const filtered = aiLabelArticlesData.filter(a => {
-    const text = (a.title + " " + a.authors + " " + a.abstract).toLowerCase();
+    const text = (a.title + " " + (a.authors || "")).toLowerCase();
     if (!text.includes(query)) return false;
 
-    if (currentAiFilter === "labeled") return (a.matched_concepts && a.matched_concepts.length > 0) || a.highlighted_html || a._aiSaved;
-    if (currentAiFilter === "unlabeled") return !(a.matched_concepts && a.matched_concepts.length > 0) && !a.highlighted_html && !a._aiSaved;
+    // is_ai_labeled: từ DB (bảng ai_document_labels), _aiSaved: vừa lưu trong phiên này
+    const aiLabeled = a.is_ai_labeled || a._aiSaved;
+    if (currentAiFilter === "labeled")   return aiLabeled;
+    if (currentAiFilter === "unlabeled") return !aiLabeled;
     return true;
   });
 
   const listEl = document.getElementById("aiArticleListScroll");
   listEl.innerHTML = filtered.map(a => {
     const isActive = a.id === currentAiArticleId ? "active" : "";
-    const isLabeled = (a.matched_concepts && a.matched_concepts.length > 0) || a.highlighted_html || a._aiSaved;
+    const isLabeled = a.is_ai_labeled || a._aiSaved;
     return `
       <div class="article-list-item ${isActive}" onclick="selectAiArticle(${a.id})">
         <div class="ali-title">${a.title || "Không có tiêu đề"}</div>
@@ -1624,7 +1731,7 @@ function filterAiArticles() {
           <span class="ali-dot ${isLabeled ? "labeled" : "unlabeled"}"></span>
           <span>${a.publication_year || "—"}</span>
           <span>·</span>
-          <span>${isLabeled ? "Đã gán nhãn" : "Chưa xử lý"}</span>
+          <span>${isLabeled ? "Đã gán nhãn AI" : "Chưa xử lý"}</span>
         </div>
       </div>
     `;
@@ -1843,6 +1950,7 @@ async function saveAiLabelResult() {
     if (!response.ok) throw new Error(payload.detail || `Lỗi lưu kết quả AI (HTTP ${response.status})`);
 
     article._aiSaved = true;
+    article.is_ai_labeled = 1; // phản ánh ngay vào filter không cần reload
     button.textContent = payload.duplicate ? "Đã lưu trước đó" : "Đã lưu kết quả AI";
     renderAiArticleList();
     showToast(payload.message || "Kết quả AI đã được lưu.", "success");

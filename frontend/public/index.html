@@ -6,7 +6,7 @@
     <title>MedNLP Studio — Hệ thống Quản lý Ngữ liệu Y học</title>
     <meta name="description" content="Nền tảng NLP y học tiếng Việt: thu thập, xử lý, gán nhãn và quản lý từ điển thuật ngữ y tế">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Sora:wght@600;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="index.css?v=4.9">
+<link rel="stylesheet" href="index.css?v=5.0">
 </head>
 <body class="auth-mode">
 
@@ -100,6 +100,14 @@
             <span class="nav-label">AI Gán nhãn</span>
             <span class="nav-badge-new" style="background:#a855f7">AI</span>
         </a>
+        <a class="nav-item" data-screen="ai-evaluation" onclick="switchScreen('ai-evaluation')">
+            <span class="nav-icon">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/>
+                </svg>
+            </span>
+            <span class="nav-label">Đánh giá AI</span>
+        </a>
         <a class="nav-item" data-screen="logs" onclick="switchScreen('logs')">
             <span class="nav-icon">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -149,7 +157,6 @@
                 <span class="role-chip" id="currentUserRole"></span>
                 <button class="logout-button" type="button" onclick="logoutCurrentUser()">Đăng xuất</button>
             </div>
-            <div class="topbar-time" id="topbarClock"></div>
         </div>
     </header>
 
@@ -620,6 +627,42 @@
         </div>
     </section>
 
+    <section class="screen" id="screen-ai-evaluation">
+        <div class="evaluation-toolbar">
+            <div>
+                <h2>Thí nghiệm 100 bài báo</h2>
+                <p class="muted">Cùng một snapshot đầu vào, ba cấu hình và checkpoint bất biến.</p>
+            </div>
+            <div class="evaluation-actions" id="evaluationAdminActions">
+                <input id="evaluationNote" class="search-input" placeholder="Ghi chú thay đổi của lần chạy">
+                <button class="btn-primary-sm" id="btnStartEvaluation" onclick="startNerExperiment()">Chạy 100 bài</button>
+                <button class="btn-outline-sm" id="btnStopEvaluation" onclick="stopNerExperiment()" disabled>Dừng</button>
+                <button class="btn-outline-sm" id="btnResumeEvaluation" onclick="resumeNerExperiment()" disabled>Tiếp tục</button>
+            </div>
+        </div>
+
+        <div class="evaluation-grid" id="evaluationProgressGrid">
+            <div class="evaluation-system" data-system="current_ai"><div class="evaluation-system-head"><strong>AI hiện tại</strong><span class="status-badge">Chưa chạy</span></div><div class="progress-track"><span></span></div><div class="evaluation-stats">0 / 100</div></div>
+            <div class="evaluation-system" data-system="vietbioner"><div class="evaluation-system-head"><strong>VietBioNER 5-shot</strong><span class="status-badge">Chưa chạy</span></div><div class="progress-track"><span></span></div><div class="evaluation-stats">0 / 100</div></div>
+            <div class="evaluation-system" data-system="vimedner"><div class="evaluation-system-head"><strong>ViMedNer 5-shot</strong><span class="status-badge">Chưa chạy</span></div><div class="progress-track"><span></span></div><div class="evaluation-stats">0 / 100</div></div>
+            <div class="evaluation-system disabled"><div class="evaluation-system-head"><strong>Prompt + AI train</strong><span class="status-badge">Chưa cấu hình</span></div><p>Cần Vertex endpoint.</p></div>
+            <div class="evaluation-system disabled"><div class="evaluation-system-head"><strong>Prompt + AI train + từ điển</strong><span class="status-badge">Chưa cấu hình</span></div><p>Cần Vertex endpoint.</p></div>
+        </div>
+
+        <div class="panel evaluation-panel">
+            <div class="panel-header"><div class="panel-title">Lịch sử checkpoint</div><div class="panel-sub" id="evaluationRunSummary">Chưa có lần chạy</div></div>
+            <div class="dict-table-wrap">
+                <table class="data-table"><thead><tr><th>Run</th><th>Trạng thái</th><th>Tiến độ</th><th>Lỗi API</th><th>Ghi chú</th><th>Thao tác</th></tr></thead><tbody id="evaluationRunsBody"><tr><td colspan="6" class="table-empty">Đang tải...</td></tr></tbody></table>
+            </div>
+        </div>
+
+        <div class="panel evaluation-panel">
+            <div class="panel-header"><div class="panel-title">Kết quả và phân tích lỗi</div><div class="panel-sub">P/R/F1 chỉ xuất hiện sau khi đủ gold; prediction không được xem là gold.</div></div>
+            <div id="evaluationMetrics" class="evaluation-metrics-empty">Chưa có gold 5 nhãn cho 100 bài đầu tiên.</div>
+            <div class="dict-table-wrap"><table class="data-table"><thead><tr><th>Hệ thống</th><th>Bài</th><th>Loại lỗi</th><th>Chi tiết</th></tr></thead><tbody id="evaluationErrorsBody"><tr><td colspan="4" class="table-empty">Chọn một run để xem lỗi.</td></tr></tbody></table></div>
+        </div>
+    </section>
+
     <!-- ============================================================
          SCREEN 5: CRAWL LOGS
     ============================================================ -->
@@ -758,7 +801,7 @@
 <!-- TOAST NOTIFICATION -->
 <div class="toast-container" id="toastContainer"></div>
 
-  <script src="review.js?v=1.6"></script>
-<script src="script.js?v=6.3"></script>
+  <script src="review.js?v=2.0"></script>
+  <script src="script.js?v=6.4"></script>
 </body>
 </html>

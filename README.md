@@ -15,6 +15,17 @@ Repository: <https://github.com/LCV-npc/NCKH_CORPUS>
 - Chuyên gia duyệt nhãn ICD-10/AI, nhận xét và xem lịch sử review.
 - Admin quản lý toàn bộ corpus, người dùng và review của chuyên gia.
 
+## Nguồn xây dựng từ điển ICD-10 tiếng Việt
+
+Từ điển ICD-10 tiếng Việt được xây dựng từ phụ lục dữ liệu do Bộ Y tế phát hành:
+
+- **Bộ Y tế (2020), Quyết định số 4469/QĐ-BYT ngày 28/10/2020**, về việc ban hành “Bảng phân loại quốc tế mã hoá bệnh tật, nguyên nhân tử vong ICD-10” và “Hướng dẫn mã hoá bệnh tật theo ICD-10” tại các cơ sở khám bệnh, chữa bệnh. Quyết định này thay thế danh mục ICD-10 ban hành kèm **Quyết định số 7603/QĐ-BYT ngày 25/12/2018**.
+- **Phụ lục được sử dụng trực tiếp trong mã nguồn:** `data/phu-lu-c-1-danh-mu-c-icd-10-thay-the-dmdc-phie-n-ba-n-6.xlsx`, sheet `ICD10`. Trong workbook, sheet này có tiêu đề “Phụ lục 1: Danh mục mã bệnh theo phân loại quốc tế bệnh tật, nguyên nhân tử vong theo ICD-10” và chứa các cột mã bệnh, tên bệnh tiếng Việt, tên bệnh tiếng Anh, chương, nhóm bệnh và ngày cập nhật.
+- File Excel được đọc bởi `backend/core/dictionary_builder.py` với `pandas.read_excel(..., sheet_name="ICD10", header=2)`, sau đó sinh artifact runtime `backend/core/Tu Dien Y Hoc/icd10_v1.json`. Artifact này gồm **12.219 dòng nguồn** và được kiểm tra toàn vẹn bằng SHA-256 trong `manifest_v1.json`.
+
+**Cách ghi trong tài liệu tham khảo:**  
+> Bộ Y tế (2020). *Quyết định số 4469/QĐ-BYT ngày 28/10/2020 về việc ban hành “Bảng phân loại quốc tế mã hoá bệnh tật, nguyên nhân tử vong ICD-10” và “Hướng dẫn mã hoá bệnh tật theo ICD-10” tại các cơ sở khám bệnh, chữa bệnh; Phụ lục 1: Danh mục mã bệnh theo ICD-10*. Tệp dữ liệu sử dụng: `phu-lu-c-1-danh-mu-c-icd-10-thay-the-dmdc-phie-n-ba-n-6.xlsx`, sheet `ICD10`.
+
 ## Kiến trúc hiện tại
 
 ```text
