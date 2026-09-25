@@ -149,14 +149,23 @@ def encode_records(rows: list[dict], tokenizer, max_length: int) -> tuple[list[d
                 flat_tokens.extend(pieces)
                 flat_word_ids.extend([local_word_id] * len(pieces))
             token_ids = tokenizer.convert_tokens_to_ids(flat_tokens)
-            encoded = tokenizer.prepare_for_model(
-                token_ids,
-                add_special_tokens=True,
-                truncation=False,
-                return_attention_mask=True,
-                return_special_tokens_mask=True,
-            )
-            special_mask = encoded.pop("special_tokens_mask")
+            if hasattr(tokenizer, "prepare_for_model"):
+                encoded = tokenizer.prepare_for_model(
+                    token_ids,
+                    add_special_tokens=True,
+                    truncation=False,
+                    return_attention_mask=True,
+                    return_special_tokens_mask=True,
+                )
+                special_mask = encoded.pop("special_tokens_mask")
+            else:
+                # Transformers 5 removed prepare_for_model from some slow tokenizers,
+                # including XLMRobertaTokenizer. Build the same fields explicitly.
+                input_ids = tokenizer.build_inputs_with_special_tokens(token_ids)
+                special_mask = tokenizer.get_special_tokens_mask(token_ids, already_has_special_tokens=False)
+                encoded = {"input_ids": input_ids, "attention_mask": [1] * len(input_ids)}
+                if "token_type_ids" in getattr(tokenizer, "model_input_names", []):
+                    encoded["token_type_ids"] = tokenizer.create_token_type_ids_from_sequences(token_ids)
             word_ids: list[int | None] = []
             flat_index = 0
             for is_special in special_mask:

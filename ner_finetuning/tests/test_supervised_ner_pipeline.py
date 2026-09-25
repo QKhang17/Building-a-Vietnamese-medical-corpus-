@@ -16,9 +16,41 @@ from supervised_ner_utils import (  # noqa: E402
     entity_counts_from_bio,
     record_to_words,
 )
+from supervised_ner_hf import encode_records  # noqa: E402
 
 
 class SupervisedNerPipelineTests(unittest.TestCase):
+    def test_transformers_v5_slow_tokenizer_fallback(self):
+        class SlowTokenizer:
+            unk_token = "<unk>"
+            model_input_names = ["input_ids", "attention_mask"]
+
+            def tokenize(self, text):
+                return [text]
+
+            def convert_tokens_to_ids(self, tokens):
+                return list(range(10, 10 + len(tokens)))
+
+            def num_special_tokens_to_add(self, pair=False):
+                return 2
+
+            def build_inputs_with_special_tokens(self, token_ids):
+                return [0, *token_ids, 2]
+
+            def get_special_tokens_mask(self, token_ids, already_has_special_tokens=False):
+                return [1, *([0] * len(token_ids)), 1]
+
+        text = "viêm phổi"
+        row = {
+            "id": "train:slow",
+            "input_text": text,
+            "entities": [{"text": text, "label": "DISEASE", "start": 0, "end": len(text)}],
+        }
+        features, metadata = encode_records([row], SlowTokenizer(), max_length=8)
+        self.assertEqual([0, 10, 11, 2], features[0]["input_ids"])
+        self.assertEqual([-100, 1, 2, -100], features[0]["labels"])
+        self.assertEqual([None, 0, 1, None], metadata[0]["word_ids"])
+
     def test_span_to_bio_and_back(self):
         text = "Bệnh nhân bị viêm phổi và sốt cao."
         disease_start = text.index("viêm phổi")
