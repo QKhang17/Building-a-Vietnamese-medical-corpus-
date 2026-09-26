@@ -9,7 +9,13 @@ from pathlib import Path
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-from bio_xlmr_utils import encode_bio_sentences, exact_counts, read_bio, relaxed_metrics  # noqa: E402
+from bio_xlmr_utils import (  # noqa: E402
+    encode_bio_sentences,
+    exact_counts,
+    read_bio,
+    relaxed_metrics,
+    seqeval_exact_metrics,
+)
 
 
 class BioXlmrScriptTests(unittest.TestCase):
@@ -50,6 +56,17 @@ class BioXlmrScriptTests(unittest.TestCase):
         self.assertEqual(0, exact["DISEASE"]["tp"])
         self.assertEqual(1, relaxed["per_label"]["DISEASE"]["tp"])
         self.assertEqual(1.0, relaxed["micro"]["f1"])
+
+    def test_exact_metrics_work_without_seqeval(self):
+        gold = [["B-DISEASE", "I-DISEASE", "O", "B-SYMPTOM"]]
+        predicted = [["B-DISEASE", "I-DISEASE", "O", "O"]]
+        result = seqeval_exact_metrics(gold, predicted)
+        self.assertEqual(1, result["micro"]["tp"])
+        self.assertEqual(0, result["micro"]["fp"])
+        self.assertEqual(1, result["micro"]["fn"])
+        self.assertEqual(1.0, result["micro"]["precision"])
+        self.assertEqual(0.5, result["micro"]["recall"])
+        self.assertAlmostEqual(2 / 3, result["micro"]["f1"])
 
 
 if __name__ == "__main__":

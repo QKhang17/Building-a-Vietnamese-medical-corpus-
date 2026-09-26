@@ -194,38 +194,41 @@ def exact_counts(gold_sequences: list[list[str]], pred_sequences: list[list[str]
 
 
 def seqeval_exact_metrics(gold_sequences: list[list[str]], pred_sequences: list[list[str]]) -> dict:
-    from seqeval.metrics import classification_report, f1_score, precision_score, recall_score
-    from seqeval.scheme import IOB2
-
-    report = classification_report(
-        gold_sequences,
-        pred_sequences,
-        mode="strict",
-        scheme=IOB2,
-        output_dict=True,
-        zero_division=0,
-    )
     counts = exact_counts(gold_sequences, pred_sequences)
-    per_label: dict[str, dict] = {}
-    for label in ENTITY_LABELS:
-        value = report.get(label, {})
-        per_label[label] = {
+    per_label = {
+        label: {
             **counts[label],
-            "precision": float(value.get("precision", counts[label]["precision"])),
-            "recall": float(value.get("recall", counts[label]["recall"])),
-            "f1": float(value.get("f1-score", counts[label]["f1"])),
-            "support": int(value.get("support", counts[label]["tp"] + counts[label]["fn"])),
+            "support": counts[label]["tp"] + counts[label]["fn"],
         }
+        for label in ENTITY_LABELS
+    }
     totals = {key: sum(per_label[label][key] for label in ENTITY_LABELS) for key in ("tp", "fp", "fn")}
+    micro = metric(**totals)
+
+    # seqeval is optional because its legacy setup.py cannot be installed on
+    # some newer Python runtimes. The span counter above implements the same
+    # strict IOB2 entity-level exact-match definition.
+    backend = "internal_strict_iob2"
+    try:
+        from seqeval.metrics import f1_score, precision_score, recall_score
+        from seqeval.scheme import IOB2
+
+        micro.update(
+            precision=float(
+                precision_score(gold_sequences, pred_sequences, mode="strict", scheme=IOB2, zero_division=0)
+            ),
+            recall=float(recall_score(gold_sequences, pred_sequences, mode="strict", scheme=IOB2, zero_division=0)),
+            f1=float(f1_score(gold_sequences, pred_sequences, mode="strict", scheme=IOB2, zero_division=0)),
+        )
+        backend = "seqeval_strict_iob2"
+    except ImportError:
+        pass
+
     return {
-        "micro": {
-            **totals,
-            "precision": float(precision_score(gold_sequences, pred_sequences, mode="strict", scheme=IOB2, zero_division=0)),
-            "recall": float(recall_score(gold_sequences, pred_sequences, mode="strict", scheme=IOB2, zero_division=0)),
-            "f1": float(f1_score(gold_sequences, pred_sequences, mode="strict", scheme=IOB2, zero_division=0)),
-        },
+        "micro": micro,
         "macro_f1": sum(per_label[label]["f1"] for label in ENTITY_LABELS) / len(ENTITY_LABELS),
         "per_label": per_label,
+        "backend": backend,
     }
 
 
