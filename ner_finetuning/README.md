@@ -137,3 +137,29 @@ VietBioNER công bố CC BY 4.0. Repository ViMedNer không có giấy phép d�
 Pipeline supervised có căn span sang BIO/subword, chia câu dài mà không cắt ngang entity, weighted loss, CRF tùy chọn, augmentation synonym chỉ từ Train, early stopping theo Dev macro-F1 và chốt Test riêng. Xem `docs/SUPERVISED_BENCHMARK_RUNBOOK.md`.
 
 Repository hiện chưa có checkpoint PhoBERT/XLM-R đã train, vì vậy không được báo cáo số supervised cho đến khi hoàn tất huấn luyện và frozen-Test evaluation.
+
+## 6. CLI trực tiếp cho dữ liệu BIO
+
+Ba CLI dưới đây đọc trực tiếp `TOKEN TAG`, hỗ trợ `IGN -> -100`, exact entity
+metric bằng `seqeval` strict IOB2 và relaxed overlap một-một:
+
+```powershell
+python ner_finetuning/scripts/train_bio_xlmr.py `
+  --train ner_finetuning/processed/medical_gold_v1/train.txt `
+  --partial-train ner_finetuning/processed/medical_gold_v1/diagnostic_supplement.partial.txt `
+  --dev ner_finetuning/processed/medical_gold_v1/dev.txt `
+  --output-dir ner_finetuning/models/xlmr-vimed-vietbio-v1 `
+  --learning-rate 2e-5 --batch-size 4 --gradient-accumulation 4 `
+  --max-length 256 --epochs 10 --seed 42 --fp16
+
+python ner_finetuning/scripts/evaluate_bio_checkpoint.py `
+  --checkpoint ner_finetuning/models/xlmr-vimed-vietbio-v1 `
+  --dev ner_finetuning/processed/medical_gold_v1/dev.txt `
+  --output ner_finetuning/evaluation_runs/xlmr-vimed-vietbio-v1-dev.json
+
+python ner_finetuning/scripts/compare_bio_checkpoints.py `
+  --checkpoint-a ner_finetuning/models/xlmr-vimed-only-v1 `
+  --checkpoint-b ner_finetuning/models/xlmr-vimed-vietbio-v1 `
+  --dev ner_finetuning/processed/medical_gold_v1/dev.txt `
+  --output ner_finetuning/evaluation_runs/bio-checkpoint-comparison.json
+```
