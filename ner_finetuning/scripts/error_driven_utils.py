@@ -175,6 +175,65 @@ def generate_error_log(gold_rows: list[dict], prediction_rows: list[dict], round
     return errors, summary
 
 
+def error_anchor(row: dict) -> str:
+    """Return a stable identity for following one error target across rounds."""
+    sample_id = str(row["id"])
+    gold = row.get("gold")
+    if gold:
+        return f"gold|{sample_id}|{gold['start']}|{gold['end']}|{gold['label']}"
+    predicted = row.get("predicted")
+    if not predicted:
+        raise ValueError(f"Error has neither Gold nor prediction: {row}")
+    return f"pred|{sample_id}|{predicted['start']}|{predicted['end']}|{predicted['label']}"
+
+
+def error_signature(row: dict) -> tuple:
+    def entity_key(entity: dict | None) -> tuple | None:
+        if not entity:
+            return None
+        return (entity["start"], entity["end"], entity["label"], normalize_pattern(entity["text"]))
+
+    return (row["error_type"], entity_key(row.get("predicted")), entity_key(row.get("gold")))
+
+
+def compare_error_rounds(previous_rows: list[dict], current_rows: list[dict]) -> dict:
+    """Classify old errors as resolved, persistent or changed, and find new errors."""
+    previous = {error_anchor(row): row for row in previous_rows}
+    current = {error_anchor(row): row for row in current_rows}
+    if len(previous) != len(previous_rows) or len(current) != len(current_rows):
+        raise ValueError("Duplicate error anchors prevent deterministic round comparison")
+
+    items: list[dict] = []
+    for anchor in sorted(previous.keys() | current.keys()):
+        old = previous.get(anchor)
+        new = current.get(anchor)
+        if old is None:
+            status = "NEW"
+        elif new is None:
+            status = "RESOLVED"
+        elif error_signature(old) == error_signature(new):
+            status = "PERSISTENT"
+        else:
+            status = "CHANGED"
+        items.append({"anchor": anchor, "status": status, "previous": old, "current": new})
+
+    counts = Counter(item["status"] for item in items)
+    previous_count = len(previous_rows)
+    current_count = len(current_rows)
+    return {
+        "summary": {
+            "previous_errors": previous_count,
+            "current_errors": current_count,
+            "resolved": counts["RESOLVED"],
+            "persistent": counts["PERSISTENT"],
+            "changed": counts["CHANGED"],
+            "new": counts["NEW"],
+            "net_error_delta": current_count - previous_count,
+        },
+        "items": items,
+    }
+
+
 def representative_label(row: dict) -> str:
     entity = row.get("gold") or row.get("predicted") or {}
     return str(entity.get("label", "UNKNOWN"))

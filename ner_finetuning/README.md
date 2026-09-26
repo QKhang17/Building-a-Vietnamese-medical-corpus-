@@ -10,6 +10,10 @@ Vòng lặp học qua lỗi trên Dev được chạy bằng
 `scripts/iterative_error_correction.py`; đây là prompt engineering có checkpoint,
 không cập nhật trọng số mô hình.
 
+Quy trình so sánh ViMedNER-only với ViMedNER + VietBioNER DIAGNOSTIC, cùng báo
+cáo lỗi đã sửa/lỗi còn lại/lỗi mới, nằm tại
+[`docs/TWO_SOURCE_ERROR_DRIVEN_RUNBOOK.md`](docs/TWO_SOURCE_ERROR_DRIVEN_RUNBOOK.md).
+
 Thư mục này chuẩn hóa VietBioNER và ViMedNer về năm nhãn `DISEASE`, `SYMPTOM`, `CAUSE`, `DIAGNOSTIC_PROCEDURE`, `TREATMENT`; tạo JSONL cho Vertex AI Supervised Fine-Tuning; và đánh giá exact/relaxed entity F1.
 
 ## Cấu trúc

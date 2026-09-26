@@ -16,7 +16,7 @@ from types import SimpleNamespace
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from error_driven_utils import build_prompt, generate_error_log, read_jsonl, write_jsonl  # noqa: E402
+from error_driven_utils import build_prompt, compare_error_rounds, generate_error_log, read_jsonl, write_jsonl  # noqa: E402
 from evaluate_medical_three_systems import evaluate_system  # noqa: E402
 from generate_dev_error_log import ensure_dev_only  # noqa: E402
 from run_prompt_v2_two_stage import run as run_two_stage  # noqa: E402
@@ -54,6 +54,15 @@ def print_round(round_number: int, metrics: dict, error_summary: dict, previous:
     print(
         "Errors: "
         + ", ".join(f"{name}={counts.get(name, 0)}" for name in ("sai_bien", "sai_nhan", "nhan_du", "bo_sot"))
+    )
+
+
+def print_transition(transition: dict) -> None:
+    summary = transition["summary"]
+    print(
+        "Transitions: "
+        f"resolved={summary['resolved']}, persistent={summary['persistent']}, "
+        f"changed={summary['changed']}, new={summary['new']}"
     )
 
 
@@ -184,6 +193,11 @@ def main() -> int:
         error_files.append(error_path)
 
         previous = history["rounds"][-1] if history["rounds"] else None
+        transition = None
+        if len(error_files) > 1:
+            transition = compare_error_rounds(read_jsonl(error_files[-2]), error_rows)
+            transition_path = errors_dir / f"transitions_round{round_number-1}_to_round{round_number}.json"
+            transition_path.write_text(json.dumps(transition, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         delta_by_type = {
             name: error_summary["by_type"].get(name, 0) - (previous["error_summary"]["by_type"].get(name, 0) if previous else 0)
             for name in ("sai_bien", "sai_nhan", "nhan_du", "bo_sot")
@@ -198,9 +212,12 @@ def main() -> int:
             "error_log": str(error_path.resolve()),
             "error_summary": error_summary,
             "error_delta_by_type": delta_by_type,
+            "error_transition": transition["summary"] if transition else None,
         }
         history["rounds"].append(round_history)
         print_round(round_number, metrics, error_summary, previous)
+        if transition:
+            print_transition(transition)
 
         exact_precision = metrics["exact"]["micro"]["precision"]
         if exact_precision >= args.target_precision:

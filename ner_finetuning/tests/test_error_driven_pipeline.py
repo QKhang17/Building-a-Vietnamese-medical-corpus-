@@ -37,6 +37,37 @@ class ErrorClassificationTests(unittest.TestCase):
         self.assertEqual(tp, 1)
         self.assertEqual(errors, [])
 
+    def test_round_comparison_tracks_resolved_persistent_changed_and_new(self):
+        sentence = "viêm phổi ho sốt"
+        disease = {"text": "viêm phổi", "label": "DISEASE", "start": 0, "end": 9}
+        symptom = {"text": "ho", "label": "SYMPTOM", "start": 10, "end": 12}
+        old_extra = {"text": "sốt", "label": "DISEASE", "start": 13, "end": 16}
+        new_extra = {"text": "sốt", "label": "SYMPTOM", "start": 13, "end": 16}
+        previous = [
+            utils.make_error("x", sentence, "bo_sot", None, disease, 1),
+            utils.make_error("x", sentence, "bo_sot", None, symptom, 1),
+            utils.make_error("x", sentence, "nhan_du", old_extra, None, 1),
+        ]
+        wrong_disease = {**disease, "label": "SYMPTOM"}
+        current = [
+            utils.make_error("x", sentence, "sai_nhan", wrong_disease, disease, 2),
+            utils.make_error("x", sentence, "bo_sot", None, symptom, 2),
+            utils.make_error("x", sentence, "nhan_du", new_extra, None, 2),
+        ]
+        comparison = utils.compare_error_rounds(previous, current)
+        self.assertEqual(
+            {
+                "previous_errors": 3,
+                "current_errors": 3,
+                "resolved": 1,
+                "persistent": 1,
+                "changed": 1,
+                "new": 1,
+                "net_error_delta": 0,
+            },
+            comparison["summary"],
+        )
+
 
 class FewShotSelectionTests(unittest.TestCase):
     def make_error(self, index, error_type, label):
