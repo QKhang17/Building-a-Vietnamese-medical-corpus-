@@ -16,9 +16,18 @@ from bio_xlmr_utils import (  # noqa: E402
     relaxed_metrics,
     seqeval_exact_metrics,
 )
+from train_bio_xlmr import latest_checkpoint  # noqa: E402
 
 
 class BioXlmrScriptTests(unittest.TestCase):
+    def test_latest_checkpoint_uses_largest_step(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "checkpoints" / "checkpoint-20").mkdir(parents=True)
+            (root / "checkpoints" / "checkpoint-100").mkdir()
+            (root / "checkpoints" / "checkpoint-invalid").mkdir()
+            self.assertEqual(root / "checkpoints" / "checkpoint-100", latest_checkpoint(root))
+
     def test_read_bio_and_ign_mask(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "train.txt"

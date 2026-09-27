@@ -48,6 +48,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gradient-checkpointing", action="store_true")
     parser.add_argument("--fp16", action="store_true")
     parser.add_argument("--bf16", action="store_true")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume from the latest output-dir/checkpoints/checkpoint-* directory.",
+    )
     return parser.parse_args()
 
 
@@ -55,11 +60,28 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def latest_checkpoint(output_dir: Path) -> Path | None:
+    checkpoints_dir = output_dir / "checkpoints"
+    candidates: list[tuple[int, Path]] = []
+    if checkpoints_dir.is_dir():
+        for path in checkpoints_dir.glob("checkpoint-*"):
+            try:
+                step = int(path.name.rsplit("-", 1)[1])
+            except ValueError:
+                continue
+            if path.is_dir():
+                candidates.append((step, path))
+    return max(candidates, default=(0, None), key=lambda item: item[0])[1]
+
+
 def main() -> int:
     args = parse_args()
     if any("test" in path.name.casefold() for path in [args.train, args.dev, *args.partial_train]):
         raise ValueError("Training accepts Train/Dev only; Test must stay frozen")
-    if args.output_dir.exists():
+    resume_checkpoint = latest_checkpoint(args.output_dir) if args.resume else None
+    if args.resume and resume_checkpoint is None:
+        raise FileNotFoundError(f"No resumable checkpoint found under: {args.output_dir / 'checkpoints'}")
+    if args.output_dir.exists() and not args.resume:
         raise FileExistsError(f"Output checkpoint already exists: {args.output_dir}")
     random.seed(args.seed)
     train_sentences = read_bio(args.train)
@@ -84,7 +106,7 @@ def main() -> int:
         model.gradient_checkpointing_enable()
     model.config.training_recipe = {"source_format": "BIO", "ign_loss_id": -100, "model_name": args.model_name}
 
-    args.output_dir.mkdir(parents=True)
+    args.output_dir.mkdir(parents=True, exist_ok=args.resume)
     hf_args = training_arguments(
         deps,
         output_dir=str(args.output_dir / "checkpoints"),
@@ -121,7 +143,7 @@ def main() -> int:
         callbacks=[deps["EarlyStoppingCallback"](early_stopping_patience=args.early_stopping_patience)],
         **processing_keyword(deps, tokenizer),
     )
-    train_result = trainer.train()
+    train_result = trainer.train(resume_from_checkpoint=str(resume_checkpoint) if resume_checkpoint else None)
     dev_metrics = trainer.evaluate()
     best_model = args.output_dir / "best_model"
     trainer.save_model(str(best_model))
@@ -141,6 +163,7 @@ def main() -> int:
         "dev_chunks": len(dev_features),
         "train_has_ign": any("IGN" in sentence["tags"] for sentence in train_sentences),
         "best_checkpoint": trainer.state.best_model_checkpoint,
+        "resumed_from_checkpoint": str(resume_checkpoint) if resume_checkpoint else None,
         "best_dev_macro_f1": trainer.state.best_metric,
         "train_metrics": train_result.metrics,
         "dev_metrics": dev_metrics,
@@ -150,7 +173,12 @@ def main() -> int:
     (args.output_dir / "training_manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8"
     )
-    print(json.dumps({"best_model": str(best_model), "best_dev_macro_f1": trainer.state.best_metric, "test_accessed": False}, indent=2))
+    print(json.dumps({
+        "best_model": str(best_model),
+        "best_dev_macro_f1": trainer.state.best_metric,
+        "resumed_from_checkpoint": str(resume_checkpoint) if resume_checkpoint else None,
+        "test_accessed": False,
+    }, indent=2))
     return 0
 
 

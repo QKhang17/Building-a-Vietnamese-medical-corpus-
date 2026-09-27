@@ -163,3 +163,9 @@ python ner_finetuning/scripts/compare_bio_checkpoints.py `
   --dev ner_finetuning/processed/medical_gold_v1/dev.txt `
   --output ner_finetuning/evaluation_runs/bio-checkpoint-comparison.json
 ```
+
+Nếu runtime bị ngắt sau khi đã lưu ít nhất một checkpoint, chạy lại đúng lệnh
+train với thêm `--resume`. Script tìm checkpoint có số bước lớn nhất trong
+`<output-dir>/checkpoints/checkpoint-*` và khôi phục model, optimizer cùng
+learning-rate scheduler. Khi không có `--resume`, thư mục output cũ vẫn được
+bảo vệ và không bị ghi đè.
