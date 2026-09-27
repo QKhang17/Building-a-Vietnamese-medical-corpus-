@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -16,7 +17,7 @@ from bio_xlmr_utils import (  # noqa: E402
     relaxed_metrics,
     seqeval_exact_metrics,
 )
-from train_bio_xlmr import latest_checkpoint  # noqa: E402
+from train_bio_xlmr import latest_checkpoint, rebase_best_checkpoint  # noqa: E402
 
 
 class BioXlmrScriptTests(unittest.TestCase):
@@ -27,6 +28,23 @@ class BioXlmrScriptTests(unittest.TestCase):
             (root / "checkpoints" / "checkpoint-100").mkdir()
             (root / "checkpoints" / "checkpoint-invalid").mkdir()
             self.assertEqual(root / "checkpoints" / "checkpoint-100", latest_checkpoint(root))
+
+    def test_rebase_best_checkpoint_after_mount_path_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            best = root / "checkpoints" / "checkpoint-20"
+            latest = root / "checkpoints" / "checkpoint-100"
+            best.mkdir(parents=True)
+            latest.mkdir()
+            state_path = latest / "trainer_state.json"
+            state_path.write_text(
+                '{"best_model_checkpoint": "/old/drive/checkpoints/checkpoint-20"}',
+                encoding="utf-8",
+            )
+
+            self.assertEqual(best, rebase_best_checkpoint(latest))
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(str(best), state["best_model_checkpoint"])
 
     def test_read_bio_and_ign_mask(self):
         with tempfile.TemporaryDirectory() as directory:

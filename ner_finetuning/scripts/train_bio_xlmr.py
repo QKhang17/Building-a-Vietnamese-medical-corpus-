@@ -74,6 +74,23 @@ def latest_checkpoint(output_dir: Path) -> Path | None:
     return max(candidates, default=(0, None), key=lambda item: item[0])[1]
 
 
+def rebase_best_checkpoint(resume_checkpoint: Path) -> Path | None:
+    """Keep Trainer's best-checkpoint path valid after a Drive mount/path change."""
+    state_path = resume_checkpoint / "trainer_state.json"
+    if not state_path.is_file():
+        return None
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    stored = state.get("best_model_checkpoint")
+    if not stored:
+        return None
+    candidate = resume_checkpoint.parent / Path(stored).name
+    if candidate.is_dir() and str(candidate) != stored:
+        state["best_model_checkpoint"] = str(candidate)
+        state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+        return candidate
+    return Path(stored)
+
+
 def main() -> int:
     args = parse_args()
     if any("test" in path.name.casefold() for path in [args.train, args.dev, *args.partial_train]):
@@ -81,6 +98,10 @@ def main() -> int:
     resume_checkpoint = latest_checkpoint(args.output_dir) if args.resume else None
     if args.resume and resume_checkpoint is None:
         raise FileNotFoundError(f"No resumable checkpoint found under: {args.output_dir / 'checkpoints'}")
+    if resume_checkpoint:
+        rebased_best = rebase_best_checkpoint(resume_checkpoint)
+        if rebased_best:
+            print(f"Best checkpoint for this mount: {rebased_best}")
     if args.output_dir.exists() and not args.resume:
         raise FileExistsError(f"Output checkpoint already exists: {args.output_dir}")
     random.seed(args.seed)
